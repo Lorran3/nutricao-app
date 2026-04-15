@@ -1,0 +1,4 @@
+.venv/
+__pycache__/
+nutrition_data.json
+.streamlit/secrets.toml
