@@ -1053,10 +1053,10 @@ if page == "IA":
     }[prompt_type]
     final_prompt = f"{default_prompt}\n{extra}".strip()
 
-    if st.button("Gerar com IA"):
-            if not OPENAI_SDK_OK:
-                st.warning("IA indisponível: biblioteca openai não instalada.")
-            else:
+   if st.button("Gerar com IA"):
+    if not OPENAI_SDK_OK:
+        st.warning("IA indisponível: biblioteca openai não instalada.")
+    else:
         with st.spinner("Gerando..."):
             try:
                 output = run_ai(final_prompt, selected_patient)
