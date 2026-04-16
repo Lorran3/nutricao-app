@@ -183,24 +183,60 @@ st.markdown(
     <style>
         .stApp {
             background: #eef4fb;
+            color: #0f172a;
         }
+
         .block-container {
-            padding: 2rem 2rem 2rem 2rem;
+            padding: 2rem;
             background: #ffffff;
             border-radius: 24px;
             box-shadow: 0 28px 70px rgba(15, 23, 42, 0.08);
+            color: #0f172a;
         }
+
         [data-testid="stSidebar"] > div {
             background: #f8fafc;
             border-radius: 20px;
             padding: 1rem 0.75rem 1.25rem;
         }
-        .stSidebar .stSelectbox, .stSidebar .stRadio, .stSidebar .stTextInput, .stSidebar .stNumberInput {
-            background: #ffffff;
-            border-radius: 16px;
-            border: 1px solid #dbeafe;
+
+        /* força cor escura nos textos */
+        h1, h2, h3, h4, h5, h6,
+        p, span, label, div,
+        .stMarkdown, .stText, .stSubheader {
+            color: #0f172a !important;
         }
-        .stButton>button {
+
+        /* labels dos inputs */
+        .stNumberInput label,
+        .stTextInput label,
+        .stTextArea label,
+        .stSelectbox label,
+        .stDateInput label {
+            color: #334155 !important;
+            font-weight: 600;
+        }
+
+        /* abas */
+        button[data-baseweb="tab"] {
+            color: #334155 !important;
+            font-weight: 600;
+        }
+
+        button[data-baseweb="tab"][aria-selected="true"] {
+            color: #14b8a6 !important;
+        }
+
+        /* inputs */
+        .stNumberInput > div > div > input,
+        .stTextInput > div > div > input,
+        .stTextArea textarea {
+            background: #0f172a !important;
+            color: #ffffff !important;
+            border-radius: 12px !important;
+        }
+
+        .stButton > button {
             background-color: #2563eb;
             color: #ffffff;
             border: none;
@@ -208,20 +244,34 @@ st.markdown(
             padding: 0.85rem 1rem;
             font-weight: 600;
         }
-        .stButton>button:hover {
+
+        .stButton > button:hover {
             background-color: #1d4ed8;
+            color: #ffffff;
         }
+
         .stMetric {
             background-color: #eff6ff !important;
             border-radius: 18px;
             padding: 1rem;
-            color: #0f172a;
+            color: #0f172a !important;
         }
-        .css-18e3th9 {
-            gap: 1.5rem;
+
+        /* mensagens */
+        [data-testid="stInfo"] {
+            color: #1e3a8a !important;
         }
-        .css-1d391kg {
-            padding: 0.35rem 0.5rem;
+
+        [data-testid="stSuccess"] {
+            color: #166534 !important;
+        }
+
+        [data-testid="stWarning"] {
+            color: #92400e !important;
+        }
+
+        [data-testid="stError"] {
+            color: #991b1b !important;
         }
     </style>
     """,
