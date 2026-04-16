@@ -1,3 +1,4 @@
+# requirements_blindada: streamlit, pandas, plotly, openai (opcional), reportlab (opcional)
 
 import json
 import hashlib
@@ -16,7 +17,12 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
 try:
+    try:
     from openai import OpenAI
+    OPENAI_SDK_OK = True
+except Exception:
+    OpenAI = None
+    OPENAI_SDK_OK = False
 except Exception:
     OpenAI = None
 
@@ -1049,6 +1055,9 @@ if page == "IA":
     final_prompt = f"{default_prompt}\n{extra}".strip()
 
     if st.button("Gerar com IA"):
+            if not OPENAI_SDK_OK:
+                st.warning("IA indisponível: biblioteca openai não instalada.")
+            else:
         with st.spinner("Gerando..."):
             try:
                 output = run_ai(final_prompt, selected_patient)
