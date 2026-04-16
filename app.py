@@ -173,7 +173,7 @@ def add_dieta(dieta):
 
 
 st.set_page_config(
-    page_title="Sistema de Auxiliar em Nutrição",
+    page_title="Sistema de Nutrição",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -182,96 +182,141 @@ st.markdown(
     """
     <style>
         .stApp {
-            background: #eef4fb;
+            background: linear-gradient(180deg, #eef4fb 0%, #e2e8f0 100%);
             color: #0f172a;
         }
 
         .block-container {
             padding: 2rem;
-            background: #ffffff;
+            background: rgba(255, 255, 255, 0.96);
             border-radius: 24px;
             box-shadow: 0 28px 70px rgba(15, 23, 42, 0.08);
             color: #0f172a;
+            margin-top: 1rem;
+            margin-bottom: 1rem;
         }
 
         [data-testid="stSidebar"] > div {
             background: #f8fafc;
-            border-radius: 20px;
-            padding: 1rem 0.75rem 1.25rem;
+            border-right: 1px solid #e2e8f0;
+            padding: 1rem 0.85rem 1.25rem;
         }
 
-        /* força cor escura nos textos */
         h1, h2, h3, h4, h5, h6,
-        p, span, label, div,
+        p, li, label, div, span,
         .stMarkdown, .stText, .stSubheader {
             color: #0f172a !important;
         }
 
-        /* labels dos inputs */
-        .stNumberInput label,
-        .stTextInput label,
-        .stTextArea label,
-        .stSelectbox label,
-        .stDateInput label {
-            color: #334155 !important;
-            font-weight: 600;
+        [data-testid="stSidebar"] h1,
+        [data-testid="stSidebar"] h2,
+        [data-testid="stSidebar"] h3,
+        [data-testid="stSidebar"] p,
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] span,
+        [data-testid="stSidebar"] div {
+            color: #0f172a !important;
         }
 
-        /* abas */
-        button[data-baseweb="tab"] {
-            color: #334155 !important;
-            font-weight: 600;
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.5rem;
+            border-bottom: 1px solid #e2e8f0;
         }
 
-        button[data-baseweb="tab"][aria-selected="true"] {
+        .stTabs [data-baseweb="tab"] {
+            color: #475569 !important;
+            font-weight: 600;
+            border-radius: 10px 10px 0 0;
+            padding: 0.75rem 1rem;
+        }
+
+        .stTabs [aria-selected="true"] {
             color: #14b8a6 !important;
-        }
-
-        /* inputs */
-        .stNumberInput > div > div > input,
-        .stTextInput > div > div > input,
-        .stTextArea textarea {
-            background: #0f172a !important;
-            color: #ffffff !important;
-            border-radius: 12px !important;
+            border-bottom: 2px solid #14b8a6 !important;
         }
 
         .stButton > button {
-            background-color: #2563eb;
-            color: #ffffff;
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            color: #ffffff !important;
             border: none;
             border-radius: 14px;
             padding: 0.85rem 1rem;
-            font-weight: 600;
+            font-weight: 700;
+            box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22);
         }
 
         .stButton > button:hover {
-            background-color: #1d4ed8;
-            color: #ffffff;
+            background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+            color: #ffffff !important;
         }
 
         .stMetric {
-            background-color: #eff6ff !important;
+            background: #eff6ff !important;
+            border: 1px solid #dbeafe;
             border-radius: 18px;
             padding: 1rem;
             color: #0f172a !important;
         }
 
-        /* mensagens */
+        .stSelectbox > div > div,
+        .stMultiSelect > div > div,
+        .stDateInput > div > div,
+        .stNumberInput > div > div,
+        .stTextInput > div > div,
+        .stTextArea > div > div {
+            background: #ffffff !important;
+            border-radius: 14px !important;
+            border: 1px solid #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+
+        .stNumberInput input,
+        .stTextInput input,
+        .stTextArea textarea,
+        .stDateInput input {
+            color: #0f172a !important;
+            -webkit-text-fill-color: #0f172a !important;
+            caret-color: #0f172a !important;
+            font-weight: 600;
+        }
+
+        .stSelectbox div[data-baseweb="select"] *,
+        .stMultiSelect div[data-baseweb="select"] * {
+            color: #0f172a !important;
+        }
+
+        table, .stDataFrame, [data-testid="stTable"] {
+            color: #0f172a !important;
+        }
+
         [data-testid="stInfo"] {
+            background: #dbeafe !important;
             color: #1e3a8a !important;
+            border-radius: 14px;
         }
 
         [data-testid="stSuccess"] {
+            background: #dcfce7 !important;
             color: #166534 !important;
+            border-radius: 14px;
         }
 
         [data-testid="stWarning"] {
+            background: #fef3c7 !important;
             color: #92400e !important;
+            border-radius: 14px;
         }
 
         [data-testid="stError"] {
+            background: #fee2e2 !important;
             color: #991b1b !important;
+            border-radius: 14px;
+        }
+
+        .stExpander {
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 16px !important;
+            background: #ffffff !important;
         }
     </style>
     """,
@@ -560,6 +605,8 @@ elif page == "Calculadoras":
             st.success("Alimentos exibidos excluídos.")
 
 
+
+elif page == "Dietas":
     st.title("Minhas Dietas")
     st.markdown(
         """
@@ -644,6 +691,7 @@ elif page == "Calculadoras":
                 st.dataframe(df_dieta, use_container_width=True, hide_index=True)
     else:
         st.info("Ainda não há dietas salvas. Crie uma dieta para começar.")
+
 
 elif page == "Diário Alimentar":
     st.title("Diário Alimentar")
