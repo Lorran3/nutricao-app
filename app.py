@@ -266,32 +266,32 @@ def export_csv_bytes(df: pd.DataFrame) -> bytes:
 # =========================================================
 # STYLE
 # =========================================================
+
 def inject_css():
     st.markdown(
         """
         <style>
         :root{
-            --bg:#eef4fb;
-            --bg2:#f7fbff;
-            --card:#ffffff;
-            --line:#d9e5f2;
-            --text:#11203a;
-            --muted:#62748f;
-            --primary:#2563eb;
-            --primary2:#1d4ed8;
+            --bg:#0b1220;
+            --bg2:#111827;
+            --card:#172033;
+            --card2:#1e293b;
+            --line:#334155;
+            --text:#f8fafc;
+            --muted:#cbd5e1;
+            --primary:#3b82f6;
+            --primary2:#2563eb;
             --accent:#14b8a6;
-            --success:#16a34a;
-            --danger:#dc2626;
-            --shadow:0 12px 30px rgba(17,32,58,0.08);
+            --shadow:0 14px 34px rgba(0,0,0,0.35);
         }
 
-        html, body, .stApp {
-            color: var(--text);
+        html, body, .stApp, p, span, div, label, li {
+            color: var(--text) !important;
         }
 
         .stApp {
             background:
-                radial-gradient(circle at top right, rgba(37,99,235,0.08), transparent 24%),
+                radial-gradient(circle at top right, rgba(59,130,246,0.10), transparent 24%),
                 linear-gradient(180deg, var(--bg2) 0%, var(--bg) 100%);
         }
 
@@ -302,47 +302,16 @@ def inject_css():
         }
 
         [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #0f172a 0%, #12213f 100%);
+            background: linear-gradient(180deg, #020617 0%, #0f172a 100%);
             border-right: 1px solid rgba(255,255,255,0.06);
         }
 
         [data-testid="stSidebar"] * {
-            color: #eef4ff !important;
-        }
-
-        [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div,
-        [data-testid="stSidebar"] .stTextInput input,
-        [data-testid="stSidebar"] .stNumberInput input {
-            background: #ffffff !important;
-            color: #11203a !important;
-            border: 1px solid rgba(255,255,255,0.12) !important;
-            border-radius: 14px !important;
-        }
-
-        [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] span,
-        [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] input {
-            color: #11203a !important;
-            -webkit-text-fill-color: #11203a !important;
-        }
-
-        div[data-baseweb="popover"] * {
-            color: #11203a !important;
-        }
-
-        ul[role="listbox"],
-        li[role="option"],
-        div[role="option"] {
-            background: #ffffff !important;
-            color: #11203a !important;
-        }
-
-        ul[role="listbox"] li:hover,
-        [role="option"]:hover {
-            background: #eff6ff !important;
+            color: #f8fafc !important;
         }
 
         h1, h2, h3 {
-            color: #071225 !important;
+            color: #ffffff !important;
             letter-spacing: -0.02em;
         }
 
@@ -357,12 +326,13 @@ def inject_css():
         }
 
         .hero {
-            background: linear-gradient(135deg, #0f172a 0%, #1c2f6f 55%, #2563eb 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);
             border-radius: 28px;
             padding: 1.7rem 1.7rem 1.35rem 1.7rem;
             color: white;
-            box-shadow: 0 22px 40px rgba(17,32,58,0.16);
+            box-shadow: 0 22px 40px rgba(0,0,0,0.30);
             margin-bottom: 1rem;
+            border: 1px solid rgba(255,255,255,0.08);
         }
 
         .hero h1, .hero p {
@@ -377,7 +347,7 @@ def inject_css():
         }
 
         .section-card {
-            background: #ffffff !important;
+            background: var(--card) !important;
             border: 1px solid var(--line);
             border-radius: 22px;
             padding: 1.1rem;
@@ -387,22 +357,22 @@ def inject_css():
         }
 
         .stMetric {
-            background: #ffffff !important;
-            color: #11203a !important;
-            border: 1px solid #dbeafe !important;
+            background: var(--card2) !important;
+            color: #ffffff !important;
+            border: 1px solid #334155 !important;
             border-radius: 18px !important;
             padding: 0.8rem !important;
-            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08) !important;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25) !important;
             opacity: 1 !important;
         }
 
         .stMetric label {
-            color: #64748b !important;
+            color: #cbd5e1 !important;
             font-weight: 600 !important;
         }
 
         .stMetric div {
-            color: #0f172a !important;
+            color: #ffffff !important;
             font-weight: 700 !important;
         }
 
@@ -413,7 +383,7 @@ def inject_css():
             border-radius: 14px !important;
             padding: 0.78rem 1rem !important;
             font-weight: 700 !important;
-            box-shadow: 0 10px 20px rgba(37,99,235,0.20);
+            box-shadow: 0 10px 20px rgba(37,99,235,0.25);
         }
 
         .stDownloadButton > button {
@@ -426,30 +396,83 @@ def inject_css():
         }
 
         .stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea {
-            background: #ffffff !important;
-            color: #11203a !important;
+            background: #0f172a !important;
+            color: #f8fafc !important;
             border-radius: 14px !important;
-            border: 1px solid #cedceb !important;
+            border: 1px solid #475569 !important;
+            -webkit-text-fill-color: #f8fafc !important;
         }
 
+        .stTextInput label, .stNumberInput label, .stDateInput label, .stTextArea label, .stSelectbox label, .stMultiSelect label {
+            color: #e2e8f0 !important;
+            font-weight: 600 !important;
+        }
+
+        /* SELECTS FECHADOS */
         .stSelectbox div[data-baseweb="select"] > div,
         .stMultiSelect div[data-baseweb="select"] > div {
-            background: #ffffff !important;
-            color: #11203a !important;
+            background: #0f172a !important;
+            color: #f8fafc !important;
             border-radius: 14px !important;
-            border: 1px solid #cedceb !important;
+            border: 1px solid #475569 !important;
         }
 
         .stSelectbox div[data-baseweb="select"] span,
         .stMultiSelect div[data-baseweb="select"] span,
         .stSelectbox div[data-baseweb="select"] input,
-        .stMultiSelect div[data-baseweb="select"] input {
-            color: #11203a !important;
-            -webkit-text-fill-color: #11203a !important;
+        .stMultiSelect div[data-baseweb="select"] input,
+        .stSelectbox div[data-baseweb="select"] div,
+        .stMultiSelect div[data-baseweb="select"] div {
+            color: #f8fafc !important;
+            -webkit-text-fill-color: #f8fafc !important;
         }
 
+        .stSelectbox svg, .stMultiSelect svg {
+            fill: #f8fafc !important;
+        }
+
+        /* DROPDOWNS ABERTOS */
+        div[data-baseweb="popover"] {
+            background: #0f172a !important;
+            color: #f8fafc !important;
+        }
+
+        div[data-baseweb="popover"] * {
+            color: #f8fafc !important;
+            -webkit-text-fill-color: #f8fafc !important;
+        }
+
+        ul[role="listbox"],
+        div[role="listbox"] {
+            background: #0f172a !important;
+            border: 1px solid #475569 !important;
+            border-radius: 14px !important;
+            box-shadow: 0 18px 40px rgba(0,0,0,0.45) !important;
+        }
+
+        li[role="option"],
+        div[role="option"],
+        [role="option"] {
+            background: #0f172a !important;
+            color: #f8fafc !important;
+        }
+
+        li[role="option"]:hover,
+        div[role="option"]:hover,
+        [role="option"]:hover {
+            background: #1e293b !important;
+            color: #ffffff !important;
+        }
+
+        li[aria-selected="true"],
+        div[aria-selected="true"] {
+            background: #2563eb !important;
+            color: #ffffff !important;
+        }
+
+        /* TABS */
         .stTabs [data-baseweb="tab-list"] {
-            background: rgba(255,255,255,0.8);
+            background: #111827;
             border: 1px solid var(--line);
             padding: 0.35rem;
             border-radius: 16px;
@@ -460,50 +483,56 @@ def inject_css():
             height: auto;
             padding: 0.7rem 0.95rem;
             border-radius: 12px;
-            color: #334155 !important;
+            color: #e2e8f0 !important;
             font-weight: 700;
         }
 
         .stTabs [aria-selected="true"] {
-            background: #e9f2ff !important;
-            color: #11203a !important;
-            border: 1px solid #bfd7ff !important;
+            background: #2563eb !important;
+            color: #ffffff !important;
+            border: 1px solid #3b82f6 !important;
         }
 
         div[data-testid="stDataFrame"], div[data-testid="stTable"] {
             border: 1px solid var(--line);
             border-radius: 16px;
             overflow: hidden;
-            background: #ffffff !important;
+            background: var(--card) !important;
         }
 
         [data-testid="stInfo"] {
-            background: #e0f2fe !important;
-            color: #0369a1 !important;
+            background: #082f49 !important;
+            color: #bae6fd !important;
             font-weight: 600 !important;
             border-radius: 16px;
         }
 
-        [data-testid="stSuccess"], [data-testid="stWarning"], [data-testid="stError"] {
+        [data-testid="stSuccess"] {
+            background: #052e16 !important;
+            color: #bbf7d0 !important;
+            border-radius: 16px;
+        }
+
+        [data-testid="stWarning"] {
+            background: #451a03 !important;
+            color: #fed7aa !important;
+            border-radius: 16px;
+        }
+
+        [data-testid="stError"] {
+            background: #450a0a !important;
+            color: #fecaca !important;
             border-radius: 16px;
         }
 
         .soft {
             color: var(--muted) !important;
         }
-
-        .kpi-strip {
-            background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-            border: 1px solid var(--line);
-            border-radius: 18px;
-            padding: 0.9rem 1rem;
-            box-shadow: var(--shadow);
-            margin-bottom: 1rem;
-        }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
 
 
 def hero(title: str, subtitle: str):
