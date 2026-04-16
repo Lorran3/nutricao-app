@@ -17,7 +17,6 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
 try:
-    try:
     from openai import OpenAI
     OPENAI_SDK_OK = True
 except Exception:
