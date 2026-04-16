@@ -102,6 +102,10 @@ def load_data():
                 {**item, "data": parse_datetime(item["data"])}
                 for item in raw.get("diario", [])
             ]
+            raw["dietas"] = [
+                {**item, "data": parse_datetime(item["data"])}
+                for item in raw.get("dietas", [])
+            ]
             raw["alimentos_favoritos"] = raw.get("alimentos_favoritos", DEFAULT_ALIMENTOS.copy())
             return raw
         except Exception:
@@ -110,6 +114,7 @@ def load_data():
         "alimentos_favoritos": DEFAULT_ALIMENTOS.copy(),
         "historico": [],
         "diario": [],
+        "dietas": [],
     }
 
 
@@ -124,6 +129,10 @@ def save_data():
         "diario": [
             {**item, "data": item["data"].isoformat() if isinstance(item["data"], datetime) else item["data"]}
             for item in store["diario"]
+        ],
+        "dietas": [
+            {**item, "data": item["data"].isoformat() if isinstance(item["data"], datetime) else item["data"]}
+            for item in store["dietas"]
         ],
     }
     DATA_FILE.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -158,6 +167,11 @@ def delete_alimentos(chaves):
     save_data()
 
 
+def add_dieta(dieta):
+    st.session_state.data_store["dietas"].append(dieta)
+    save_data()
+
+
 st.set_page_config(
     page_title="Sistema de Auxiliar em Nutrição",
     layout="wide",
@@ -167,21 +181,47 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-        .main {
-            padding: 0;
+        .stApp {
+            background: #eef4fb;
         }
-        .stMetric {
-            background-color: #1f2937;
-            padding: 10px;
-            border-radius: 5px;
+        .block-container {
+            padding: 2rem 2rem 2rem 2rem;
+            background: #ffffff;
+            border-radius: 24px;
+            box-shadow: 0 28px 70px rgba(15, 23, 42, 0.08);
+        }
+        [data-testid="stSidebar"] > div {
+            background: #f8fafc;
+            border-radius: 20px;
+            padding: 1rem 0.75rem 1.25rem;
+        }
+        .stSidebar .stSelectbox, .stSidebar .stRadio, .stSidebar .stTextInput, .stSidebar .stNumberInput {
+            background: #ffffff;
+            border-radius: 16px;
+            border: 1px solid #dbeafe;
         }
         .stButton>button {
             background-color: #2563eb;
             color: #ffffff;
-            border-radius: 6px;
+            border: none;
+            border-radius: 14px;
+            padding: 0.85rem 1rem;
+            font-weight: 600;
         }
         .stButton>button:hover {
             background-color: #1d4ed8;
+        }
+        .stMetric {
+            background-color: #eff6ff !important;
+            border-radius: 18px;
+            padding: 1rem;
+            color: #0f172a;
+        }
+        .css-18e3th9 {
+            gap: 1.5rem;
+        }
+        .css-1d391kg {
+            padding: 0.35rem 0.5rem;
         }
     </style>
     """,
@@ -199,11 +239,11 @@ if "data_store" not in st.session_state:
 
 store = st.session_state.data_store
 
-st.sidebar.title("Menu de Navegação")
-st.sidebar.markdown("Use o menu para navegar entre calculadoras, diário, estudos e assistente de IA.")
-page = st.sidebar.radio(
-    "Selecione uma opção:",
-    ["Home", "Calculadoras", "Diário Alimentar", "Análise de Dados", "Assistente IA", "Estudos", "Sobre"],
+st.sidebar.title("Navegação")
+st.sidebar.markdown("Selecione o módulo desejado para calcular resultados, gerir o diário ou acessar o assistente.")
+page = st.sidebar.selectbox(
+    "Menu principal",
+    ["Home", "Calculadoras", "Dietas", "Diário Alimentar", "Análise de Dados", "Assistente IA", "Estudos", "Sobre"],
 )
 
 Hoje = date.today()
@@ -232,7 +272,8 @@ if page == "Home":
         "- **IMC**: avalia a relação entre peso e altura.\n"
         "- **TMB/TDEE**: calcula gasto energético e metas de calorias.\n"
         "- **Macronutrientes**: converte calorias em gramas.\n"
-        "- **Banco de Alimentos**: personalize sua base de dados."
+        "- **Banco de Alimentos**: personalize sua base de dados.\n"
+        "- **Dietas**: crie e compartilhe planos prontos para seguir."
     )
 
     if today_diario:
@@ -247,7 +288,13 @@ if page == "Home":
 
 elif page == "Calculadoras":
     st.title("Calculadoras de Nutrição")
-    tab1, tab2, tab3, tab4 = st.tabs(["IMC", "TMB & TDEE", "Macronutrientes", "Banco de Alimentos"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "IMC",
+        "TMB & TDEE",
+        "Meta Calórica",
+        "Macronutrientes",
+        "Banco de Alimentos",
+    ])
 
     with tab1:
         st.header("Calculadora de IMC")
@@ -326,6 +373,71 @@ elif page == "Calculadoras":
                 st.error("Preencha todos os campos corretamente.")
 
     with tab3:
+        st.header("Meta Calórica Recomendada")
+        col1, col2, col3 = st.columns(3)
+        peso_meta = col1.number_input("Peso (kg)", min_value=0.0, step=0.1, key="peso_meta")
+        altura_meta = col2.number_input("Altura (cm)", min_value=0.0, step=1.0, key="altura_meta")
+        idade_meta = col3.number_input("Idade (anos)", min_value=0, step=1, key="idade_meta")
+
+        col1, col2 = st.columns(2)
+        genero_meta = col1.selectbox("Gênero", ["Masculino", "Feminino"], key="genero_meta")
+        atividade_meta = col2.selectbox(
+            "Nível de atividade",
+            ["Sedentário", "Levemente ativo", "Moderadamente ativo", "Muito ativo", "Atleta"],
+            key="atividade_meta",
+        )
+
+        objetivo_meta = st.selectbox(
+            "Objetivo",
+            ["Manutenção", "Déficit leve (-10%)", "Déficit moderado (-15%)", "Ganho leve (+10%)"],
+            key="objetivo_meta",
+        )
+
+        if st.button("Calcular meta calórica", key="btn_meta_calorica"):
+            if peso_meta > 0 and altura_meta > 0 and idade_meta > 0:
+                if genero_meta == "Masculino":
+                    tmb_meta = 10 * peso_meta + 6.25 * altura_meta - 5 * idade_meta + 5
+                else:
+                    tmb_meta = 10 * peso_meta + 6.25 * altura_meta - 5 * idade_meta - 161
+
+                fatores = {
+                    "Sedentário": 1.2,
+                    "Levemente ativo": 1.375,
+                    "Moderadamente ativo": 1.55,
+                    "Muito ativo": 1.725,
+                    "Atleta": 1.9,
+                }
+                tdee_meta = tmb_meta * fatores[atividade_meta]
+
+                ajustes = {
+                    "Manutenção": 1.0,
+                    "Déficit leve (-10%)": 0.90,
+                    "Déficit moderado (-15%)": 0.85,
+                    "Ganho leve (+10%)": 1.10,
+                }
+                meta_calorica = tdee_meta * ajustes[objetivo_meta]
+
+                st.metric("TMB estimada", f"{tmb_meta:.0f} kcal/dia")
+                st.metric("TDEE estimado", f"{tdee_meta:.0f} kcal/dia")
+                st.metric("Meta diária recomendada", f"{meta_calorica:.0f} kcal")
+
+                st.success(
+                    f"Para seu peso e altura, sua necessidade energética estimada é de {tdee_meta:.0f} kcal/dia. "
+                    f"Com o objetivo selecionado, recomendamos cerca de {meta_calorica:.0f} kcal/dia."
+                )
+
+                add_historico({
+                    "tipo": "Meta Calórica",
+                    "descricao": f"Meta {objetivo_meta}: {meta_calorica:.0f} kcal",
+                    "tmb": tmb_meta,
+                    "tdee": tdee_meta,
+                    "meta_calorica": meta_calorica,
+                    "data": datetime.now(),
+                })
+            else:
+                st.error("Preencha peso, altura e idade corretamente.")
+
+    with tab4:
         st.header("Calculadora de Macronutrientes")
         calorias_diarias = st.number_input("Calorias diárias", min_value=0, step=50, key="calorias_macros")
         pct_proteina = st.slider("Proteína (%)", 10, 40, 30, key="pct_proteina")
@@ -363,7 +475,7 @@ elif page == "Calculadoras":
             else:
                 st.error("Informe as calorias diárias.")
 
-    with tab4:
+    with tab5:
         st.header("Banco de Alimentos")
         search = st.text_input("Buscar alimento", key="search_food")
         alimentos = store["alimentos_favoritos"]
@@ -396,6 +508,92 @@ elif page == "Calculadoras":
         if st.button("Excluir alimentos exibidos", key="delete_foods"):
             delete_alimentos(list(filtrados.keys()))
             st.success("Alimentos exibidos excluídos.")
+
+
+    st.title("Minhas Dietas")
+    st.markdown(
+        """
+        Crie dietas prontas, escolha opções entre seus alimentos favoritos e compartilhe sua rotina alimentar.
+        Use esta área para guardar planos de refeição que você realmente pode seguir.
+        """
+    )
+
+    with st.expander("Montar nova dieta"):
+        nome_dieta = st.text_input("Nome da dieta", key="nome_dieta")
+        objetivo_dieta = st.selectbox(
+            "Objetivo da dieta",
+            ["Manutenção", "Emagrecimento", "Hipertrofia", "Saúde geral"],
+            key="objetivo_dieta",
+        )
+        descricao_dieta = st.text_area(
+            "Instruções ou motivação",
+            placeholder="Descreva o propósito, dicas ou como seguir essa dieta.",
+            key="descricao_dieta",
+            height=120,
+        )
+
+        alimentos_selecionados = st.multiselect(
+            "Escolha os alimentos que farão parte da dieta",
+            list(store["alimentos_favoritos"].keys()),
+            key="alimentos_dieta",
+        )
+
+        porcoes = {}
+        if alimentos_selecionados:
+            st.write("Defina quantas porções de cada alimento você inclui na dieta:")
+            for alimento in alimentos_selecionados:
+                porcoes[alimento] = st.number_input(
+                    f"{alimento} (porções)",
+                    min_value=0.1,
+                    step=0.1,
+                    value=1.0,
+                    key=f"porcao_{alimento}",
+                )
+
+        total_calorias_dieta = sum(
+            store["alimentos_favoritos"][alimento] * porcoes[alimento]
+            for alimento in porcoes
+        ) if porcoes else 0.0
+
+        if st.button("Salvar dieta", key="btn_salvar_dieta"):
+            if not nome_dieta.strip():
+                st.error("Dê um nome à sua dieta.")
+            elif not alimentos_selecionados:
+                st.error("Selecione pelo menos um alimento para montar a dieta.")
+            else:
+                itens_dieta = [
+                    {
+                        "alimento": alimento,
+                        "porcoes": porcoes[alimento],
+                        "calorias": store["alimentos_favoritos"][alimento] * porcoes[alimento],
+                    }
+                    for alimento in alimentos_selecionados
+                ]
+                add_dieta({
+                    "nome": nome_dieta.strip(),
+                    "objetivo": objetivo_dieta,
+                    "descricao": descricao_dieta.strip(),
+                    "itens": itens_dieta,
+                    "total_calorias": total_calorias_dieta,
+                    "data": datetime.now(),
+                })
+                st.success("Dieta salva com sucesso! Ela aparecerá na lista abaixo.")
+
+    st.markdown("---")
+    st.subheader("Dietas salvas")
+    dietas = sorted(store["dietas"], key=lambda x: x["data"], reverse=True)
+    if dietas:
+        for dieta in dietas:
+            with st.expander(f"{dieta['nome']} — {dieta['objetivo']} ({dieta['total_calorias']:.0f} kcal)"):
+                st.write(f"**Motivação:** {dieta['descricao'] or 'Sem descrição'}")
+                st.write(f"**Criada em:** {dieta['data'].strftime('%d/%m/%Y %H:%M')}")
+                st.write("**Alimentos da dieta:**")
+                df_dieta = pd.DataFrame(dieta["itens"])
+                df_dieta["calorias"] = df_dieta["calorias"].map(lambda x: f"{x:.0f}")
+                df_dieta.columns = ["Alimento", "Porções", "Calorias"]
+                st.dataframe(df_dieta, use_container_width=True, hide_index=True)
+    else:
+        st.info("Ainda não há dietas salvas. Crie uma dieta para começar.")
 
 elif page == "Diário Alimentar":
     st.title("Diário Alimentar")
