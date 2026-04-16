@@ -1,24 +1,29 @@
 
 import json
 import hashlib
+import io
+import re
 from datetime import datetime, date
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.pdfgen import canvas
+
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
 
 
-# =========================================================
-# CONFIG
-# =========================================================
-APP_NAME = "NutriFlow SaaS"
-DATA_FILE = Path("nutriflow_saas_data.json")
+APP_NAME = "Painel Nutrição"
+DATA_FILE = Path("painel_nutricao_data.json")
 
-
-# =========================================================
-# DEFAULT DATA
-# =========================================================
 DEFAULT_FOODS = {
     "Frango grelhado (100g)": {"kcal": 165, "protein": 31.0, "carbs": 0.0, "fat": 3.6, "fiber": 0.0},
     "Arroz cozido (100g)": {"kcal": 130, "protein": 2.7, "carbs": 28.0, "fat": 0.3, "fiber": 0.4},
@@ -46,22 +51,16 @@ ACTIVITY_FACTORS = {
 }
 
 STUDY_AREAS = {
-    "Base biológica": ["Anatomia", "Fisiologia", "Bioquímica", "Metabolismo", "Microbiologia"],
-    "Ciências dos alimentos": ["Bromatologia", "Técnica dietética", "Tecnologia de alimentos", "Segurança alimentar"],
-    "Nutrição aplicada": ["Avaliação nutricional", "Dietoterapia", "Nutrição clínica", "Nutrição esportiva", "Materno-infantil"],
-    "Saúde coletiva e gestão": ["Políticas públicas", "Epidemiologia", "UAN", "Educação alimentar", "Gestão de serviço"],
-    "Profissão": ["Anamnese", "Prontuário", "Plano alimentar", "Conduta", "Ética", "Comunicação"],
+    "Base": ["Anatomia", "Fisiologia", "Bioquímica", "Metabolismo", "Microbiologia"],
+    "Alimentos": ["Bromatologia", "Técnica dietética", "Tecnologia de alimentos", "Segurança alimentar"],
+    "Clínica": ["Avaliação nutricional", "Dietoterapia", "Nutrição clínica", "Esportiva", "Materno-infantil"],
+    "Coletiva": ["Políticas públicas", "Epidemiologia", "UAN", "Educação alimentar"],
+    "Prática": ["Anamnese", "Prontuário", "Plano alimentar", "Conduta", "Ética"],
 }
 
 
-# =========================================================
-# STORAGE
-# =========================================================
 def default_data():
-    return {
-        "users": {},
-        "shared_foods": DEFAULT_FOODS.copy(),
-    }
+    return {"users": {}, "shared_foods": DEFAULT_FOODS.copy()}
 
 
 def hash_password(password: str) -> str:
@@ -80,7 +79,7 @@ def serialize_dt(value):
     return value
 
 
-def empty_user_profile(full_name: str):
+def empty_profile(full_name: str):
     return {
         "full_name": full_name,
         "created_at": datetime.now().isoformat(),
@@ -90,7 +89,7 @@ def empty_user_profile(full_name: str):
         "history": [],
         "tasks": [],
         "study_progress": {},
-        "crm_notes": [],
+        "notes": [],
     }
 
 
@@ -101,28 +100,24 @@ def load_data():
         raw = json.loads(DATA_FILE.read_text(encoding="utf-8"))
         raw.setdefault("users", {})
         raw.setdefault("shared_foods", DEFAULT_FOODS.copy())
-        merged = DEFAULT_FOODS.copy()
-        merged.update(raw.get("shared_foods", {}))
-        raw["shared_foods"] = merged
+        foods = DEFAULT_FOODS.copy()
+        foods.update(raw["shared_foods"])
+        raw["shared_foods"] = foods
 
         for _, user in raw["users"].items():
-            for key in ["patients", "plans", "diary", "history", "tasks", "crm_notes"]:
+            user.setdefault("password_hash", "")
+            user.setdefault("profile", empty_profile("Usuário"))
+            for key in ["patients", "plans", "diary", "history", "tasks", "notes"]:
                 user.setdefault(key, [])
-            user.setdefault("study_progress", {})
-            user.setdefault("profile", empty_user_profile("Usuário"))
-
-            for list_key in ["patients", "plans", "diary", "history", "tasks", "crm_notes"]:
                 processed = []
-                for item in user[list_key]:
+                for item in user[key]:
                     item = dict(item)
-                    if "data" in item:
-                        item["data"] = parse_dt(item["data"])
-                    if "created_at" in item:
-                        item["created_at"] = parse_dt(item["created_at"])
-                    if "updated_at" in item:
-                        item["updated_at"] = parse_dt(item["updated_at"])
+                    for dt_key in ["data", "created_at", "updated_at"]:
+                        if dt_key in item:
+                            item[dt_key] = parse_dt(item[dt_key])
                     processed.append(item)
-                user[list_key] = processed
+                user[key] = processed
+            user.setdefault("study_progress", {})
         return raw
     except Exception:
         return default_data()
@@ -130,7 +125,6 @@ def load_data():
 
 def save_data():
     payload = {"users": {}, "shared_foods": st.session_state.app_data["shared_foods"]}
-
     for username, user in st.session_state.app_data["users"].items():
         saved = {
             "password_hash": user["password_hash"],
@@ -140,25 +134,17 @@ def save_data():
             "diary": [],
             "history": [],
             "tasks": [],
+            "notes": [],
             "study_progress": user.get("study_progress", {}),
-            "crm_notes": [],
         }
-
-        for key in ["patients", "plans", "diary", "history", "tasks", "crm_notes"]:
+        for key in ["patients", "plans", "diary", "history", "tasks", "notes"]:
             for item in user.get(key, []):
-                clean = {}
-                for k, v in item.items():
-                    clean[k] = serialize_dt(v)
+                clean = {k: serialize_dt(v) for k, v in item.items()}
                 saved[key].append(clean)
-
         payload["users"][username] = saved
-
     DATA_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-# =========================================================
-# HELPERS
-# =========================================================
 def current_user():
     username = st.session_state.get("auth_user")
     if not username:
@@ -166,12 +152,12 @@ def current_user():
     return st.session_state.app_data["users"][username]
 
 
-def add_history(tipo: str, descricao: str, extra=None):
+def add_history(kind: str, text: str, extra=None):
     user = current_user()
-    record = {"tipo": tipo, "descricao": descricao, "data": datetime.now()}
+    row = {"tipo": kind, "descricao": text, "data": datetime.now()}
     if extra:
-        record.update(extra)
-    user["history"].append(record)
+        row.update(extra)
+    user["history"].append(row)
     save_data()
 
 
@@ -191,10 +177,10 @@ def bmi_label(bmi):
     if bmi < 30:
         return "Sobrepeso"
     if bmi < 35:
-        return "Obesidade grau I"
+        return "Obesidade I"
     if bmi < 40:
-        return "Obesidade grau II"
-    return "Obesidade grau III"
+        return "Obesidade II"
+    return "Obesidade III"
 
 
 def calc_bmr(weight, height_cm, age, sex):
@@ -205,346 +191,396 @@ def calc_bmr(weight, height_cm, age, sex):
 
 def calc_tdee(weight, height_cm, age, sex, activity):
     bmr = calc_bmr(weight, height_cm, age, sex)
-    tdee = bmr * ACTIVITY_FACTORS[activity]
-    return bmr, tdee
+    return bmr, bmr * ACTIVITY_FACTORS[activity]
 
 
 def macro_from_percent(kcal, protein_pct, carbs_pct, fat_pct):
-    p = (kcal * protein_pct / 100) / 4
-    c = (kcal * carbs_pct / 100) / 4
-    f = (kcal * fat_pct / 100) / 9
-    return p, c, f
+    protein = (kcal * protein_pct / 100) / 4
+    carbs = (kcal * carbs_pct / 100) / 4
+    fat = (kcal * fat_pct / 100) / 9
+    return protein, carbs, fat
 
 
-def patient_report_html(patient: dict) -> str:
-    return f"""
-    <html>
-    <head>
-        <meta charset="utf-8" />
-        <title>Ficha do Paciente</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; padding: 24px; color: #11203a; }}
-            h1 {{ margin-bottom: 6px; }}
-            h2 {{ margin-top: 24px; border-bottom: 1px solid #dbe5f0; padding-bottom: 6px; }}
-            .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
-            .box {{ background: #f7fbff; border: 1px solid #dbe5f0; border-radius: 10px; padding: 10px; }}
-            .muted {{ color: #5b6b84; }}
-        </style>
-    </head>
-    <body>
-        <h1>{patient['name']}</h1>
-        <div class="muted">Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}</div>
-
-        <h2>Dados principais</h2>
-        <div class="grid">
-            <div class="box"><b>Idade:</b> {patient['age']}</div>
-            <div class="box"><b>Sexo:</b> {patient['sex']}</div>
-            <div class="box"><b>Peso:</b> {patient['weight']} kg</div>
-            <div class="box"><b>Altura:</b> {patient['height']} cm</div>
-            <div class="box"><b>IMC:</b> {patient['bmi']}</div>
-            <div class="box"><b>Classificação:</b> {patient['bmi_class']}</div>
-            <div class="box"><b>TMB:</b> {patient['bmr']} kcal</div>
-            <div class="box"><b>TDEE:</b> {patient['tdee']} kcal</div>
-            <div class="box"><b>Objetivo:</b> {patient['goal']}</div>
-            <div class="box"><b>Atividade:</b> {patient['activity']}</div>
-        </div>
-
-        <h2>Queixa principal</h2>
-        <div class="box">{patient['complaint'] or 'Não informado'}</div>
-
-        <h2>Hábitos e observações</h2>
-        <div class="box">{patient['notes'] or 'Não informado'}</div>
-    </body>
-    </html>
-    """
+def slugify(text):
+    text = re.sub(r"[^a-zA-Z0-9_-]+", "_", text.strip().lower())
+    return text or "arquivo"
 
 
-def export_csv_bytes(df: pd.DataFrame) -> bytes:
-    return df.to_csv(index=False).encode("utf-8-sig")
+def wrap_lines(text, max_chars=92):
+    words = str(text or "").split()
+    if not words:
+        return [""]
+    lines = []
+    cur = words[0]
+    for word in words[1:]:
+        if len(cur) + 1 + len(word) <= max_chars:
+            cur += " " + word
+        else:
+            lines.append(cur)
+            cur = word
+    lines.append(cur)
+    return lines
 
 
-# =========================================================
-# STYLE
-# =========================================================
+def draw_paragraph(c, text, x, y, width_mm, font="Helvetica", size=10, leading=14, color=colors.HexColor("#0f172a")):
+    c.setFillColor(color)
+    c.setFont(font, size)
+    width_points = width_mm * mm
+    words = str(text or "").split()
+    if not words:
+        return y
+    line = words[0]
+    lines = []
+    for word in words[1:]:
+        test = f"{line} {word}"
+        if stringWidth(test, font, size) <= width_points:
+            line = test
+        else:
+            lines.append(line)
+            line = word
+    lines.append(line)
+    for ln in lines:
+        c.drawString(x, y, ln)
+        y -= leading
+    return y
+
+
+def make_patient_pdf_bytes(patient: dict, plan: dict | None = None) -> bytes:
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+    margin = 18 * mm
+    y = height - 22 * mm
+
+    navy = colors.HexColor("#0f172a")
+    blue = colors.HexColor("#2563eb")
+    panel = colors.HexColor("#eef4ff")
+    line = colors.HexColor("#dbe4f0")
+    text = colors.HexColor("#0f172a")
+    muted = colors.HexColor("#475569")
+
+    c.setFillColor(navy)
+    c.roundRect(margin, height - 42 * mm, width - 2 * margin, 24 * mm, 6 * mm, fill=1, stroke=0)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(margin + 10, height - 29 * mm, "Ficha nutricional")
+    c.setFont("Helvetica", 10)
+    c.drawString(margin + 10, height - 35 * mm, datetime.now().strftime("Gerado em %d/%m/%Y %H:%M"))
+
+    y = height - 52 * mm
+    c.setFillColor(text)
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(margin, y, patient["name"])
+    y -= 8 * mm
+
+    card_w = (width - 2 * margin - 8 * mm) / 2
+    card_h = 18 * mm
+    stats = [
+        ("Idade", str(patient["age"])),
+        ("Sexo", patient["sex"]),
+        ("Peso", f'{patient["weight"]} kg'),
+        ("Altura", f'{patient["height"]} cm'),
+        ("IMC", str(patient["bmi"])),
+        ("Classificação", patient["bmi_class"]),
+        ("TMB", f'{patient["bmr"]} kcal'),
+        ("TDEE", f'{patient["tdee"]} kcal'),
+    ]
+    for idx, (label, value) in enumerate(stats):
+        col = idx % 2
+        row = idx // 2
+        x = margin + col * (card_w + 8 * mm)
+        y_box = y - row * (card_h + 3 * mm)
+        c.setFillColor(panel)
+        c.setStrokeColor(line)
+        c.roundRect(x, y_box - card_h, card_w, card_h, 4 * mm, fill=1, stroke=1)
+        c.setFillColor(muted)
+        c.setFont("Helvetica", 8)
+        c.drawString(x + 8, y_box - 8, label)
+        c.setFillColor(text)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(x + 8, y_box - 16, value)
+
+    y = y - 4 * (card_h + 3 * mm) - 4 * mm
+
+    def section(title, content):
+        nonlocal y
+        if y < 60 * mm:
+            c.showPage()
+            y = height - 24 * mm
+        c.setFillColor(blue)
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(margin, y, title)
+        y -= 7 * mm
+        y = draw_paragraph(c, content or "-", margin, y, 170, size=10, leading=13, color=text)
+        y -= 6 * mm
+
+    section("Objetivo", patient.get("goal", "-"))
+    section("Queixa principal", patient.get("complaint", "-"))
+    section("Observações", patient.get("notes", "-"))
+
+    if plan:
+        if y < 80 * mm:
+            c.showPage()
+            y = height - 24 * mm
+        c.setFillColor(blue)
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(margin, y, "Plano alimentar")
+        y -= 9 * mm
+
+        c.setFillColor(panel)
+        c.setStrokeColor(line)
+        c.roundRect(margin, y - 15 * mm, width - 2 * margin, 14 * mm, 4 * mm, fill=1, stroke=1)
+        c.setFillColor(text)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(margin + 8, y - 8, plan["name"])
+        c.setFont("Helvetica", 9)
+        c.drawString(margin + 8, y - 13, f'Objetivo: {plan["objective"]} | Kcal: {plan["total_kcal"]:.0f}')
+        y -= 22 * mm
+
+        for item in plan["items"]:
+            if y < 30 * mm:
+                c.showPage()
+                y = height - 24 * mm
+            c.setFillColor(colors.HexColor("#f8fafc"))
+            c.setStrokeColor(line)
+            c.roundRect(margin, y - 10 * mm, width - 2 * margin, 9 * mm, 2 * mm, fill=1, stroke=1)
+            c.setFillColor(text)
+            c.setFont("Helvetica", 9)
+            c.drawString(margin + 6, y - 6.5 * mm, f'{item["food"]} | {item["servings"]} porções | {item["kcal"]:.0f} kcal')
+            y -= 12 * mm
+
+    c.save()
+    return buf.getvalue()
+
+
+def build_ai_context(user, patient=None):
+    ctx = [
+        "Você é um assistente para um sistema de nutrição.",
+        "Responda em português do Brasil.",
+        "Seja direto, simples e com tom humano.",
+        "Não use linguagem de marketing nem frases robóticas.",
+        "Organize a resposta com blocos curtos.",
+        "Evite parecer texto de IA.",
+    ]
+    if patient:
+        ctx.append(
+            f'Paciente: {patient["name"]}, {patient["age"]} anos, sexo {patient["sex"]}, '
+            f'{patient["weight"]} kg, {patient["height"]} cm, IMC {patient["bmi"]}, '
+            f'classificação {patient["bmi_class"]}, objetivo {patient["goal"]}, '
+            f'atividade {patient["activity"]}, TDEE {patient["tdee"]} kcal, '
+            f'queixa "{patient["complaint"]}", observações "{patient["notes"]}".'
+        )
+    return "\n".join(ctx)
+
+
+def run_ai(prompt, patient=None):
+    if OpenAI is None:
+        raise RuntimeError("A biblioteca openai não está instalada.")
+    api_key = st.secrets.get("OPENAI_API_KEY") if hasattr(st, "secrets") else None
+    if not api_key:
+        import os
+        api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Defina OPENAI_API_KEY nos secrets ou no ambiente.")
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model="gpt-5.4",
+        instructions=build_ai_context(current_user(), patient),
+        input=prompt,
+    )
+    return response.output_text
+
 
 def inject_css():
     st.markdown(
         """
         <style>
         :root{
-            --bg:#0b1220;
-            --bg2:#111827;
-            --card:#172033;
-            --card2:#1e293b;
-            --line:#334155;
+            --bg:#0a0f1a;
+            --bg2:#0f172a;
+            --card:#121a2b;
+            --card2:#182236;
+            --line:#2a3a57;
             --text:#f8fafc;
             --muted:#cbd5e1;
             --primary:#3b82f6;
             --primary2:#2563eb;
-            --accent:#14b8a6;
-            --shadow:0 14px 34px rgba(0,0,0,0.35);
+            --ok:#16a34a;
         }
-
         html, body, .stApp, p, span, div, label, li {
             color: var(--text) !important;
         }
-
         .stApp {
             background:
                 radial-gradient(circle at top right, rgba(59,130,246,0.10), transparent 24%),
                 linear-gradient(180deg, var(--bg2) 0%, var(--bg) 100%);
         }
-
         .main .block-container {
-            padding-top: 1.3rem;
-            padding-bottom: 1.8rem;
-            opacity: 1 !important;
+            padding-top: 1.2rem;
+            padding-bottom: 2rem;
         }
-
-        [data-testid="stSidebar"] {
+        [data-testid="stSidebar"]{
             background: linear-gradient(180deg, #020617 0%, #0f172a 100%);
             border-right: 1px solid rgba(255,255,255,0.06);
         }
-
-        [data-testid="stSidebar"] * {
-            color: #f8fafc !important;
+        [data-testid="stSidebar"] *{
+            color:#f8fafc !important;
         }
+        h1,h2,h3{color:#ffffff !important; letter-spacing:-0.02em;}
+        h1{font-size:2.35rem !important; font-weight:800 !important;}
+        h2{font-size:1.55rem !important; font-weight:800 !important;}
 
-        h1, h2, h3 {
-            color: #ffffff !important;
-            letter-spacing: -0.02em;
-        }
-
-        h1 {
-            font-size: 2.5rem !important;
-            font-weight: 800 !important;
-        }
-
-        h2 {
-            font-size: 1.75rem !important;
-            font-weight: 800 !important;
-        }
-
-        .hero {
+        .hero{
             background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);
-            border-radius: 28px;
-            padding: 1.7rem 1.7rem 1.35rem 1.7rem;
-            color: white;
-            box-shadow: 0 22px 40px rgba(0,0,0,0.30);
-            margin-bottom: 1rem;
             border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 26px;
+            padding: 1.5rem 1.5rem 1.2rem;
+            box-shadow: 0 18px 40px rgba(0,0,0,0.28);
+            margin-bottom: 1rem;
         }
+        .hero h1,.hero p{margin:0; color:#fff !important;}
+        .hero p{margin-top:0.35rem; color:#dbeafe !important;}
 
-        .hero h1, .hero p {
-            color: white !important;
-            margin: 0;
-        }
-
-        .hero p {
-            margin-top: 0.45rem;
-            font-size: 1rem;
-            opacity: 0.95;
-        }
-
-        .section-card {
+        .section-card{
             background: var(--card) !important;
             border: 1px solid var(--line);
             border-radius: 22px;
-            padding: 1.1rem;
-            box-shadow: var(--shadow);
+            padding: 1.05rem;
+            box-shadow: 0 14px 28px rgba(0,0,0,0.22);
             margin-bottom: 1rem;
-            opacity: 1 !important;
         }
 
-        .stMetric {
+        .stMetric{
             background: var(--card2) !important;
-            color: #ffffff !important;
             border: 1px solid #334155 !important;
             border-radius: 18px !important;
             padding: 0.8rem !important;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25) !important;
-            opacity: 1 !important;
         }
+        .stMetric label{color:#cbd5e1 !important; font-weight:600 !important;}
+        .stMetric div{color:#ffffff !important; font-weight:700 !important;}
 
-        .stMetric label {
-            color: #cbd5e1 !important;
-            font-weight: 600 !important;
+        .stButton > button, .stDownloadButton > button{
+            color:#fff !important;
+            border:none !important;
+            border-radius:14px !important;
+            font-weight:700 !important;
         }
-
-        .stMetric div {
-            color: #ffffff !important;
-            font-weight: 700 !important;
+        .stButton > button{
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary2) 100%) !important;
         }
-
-        .stButton > button {
-            background: linear-gradient(135deg, var(--primary) 0%, var(--primary2) 100%);
-            color: white !important;
-            border: none !important;
-            border-radius: 14px !important;
-            padding: 0.78rem 1rem !important;
-            font-weight: 700 !important;
-            box-shadow: 0 10px 20px rgba(37,99,235,0.25);
-        }
-
-        .stDownloadButton > button {
+        .stDownloadButton > button{
             background: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%) !important;
-            color: white !important;
-            border: none !important;
-            border-radius: 14px !important;
-            padding: 0.78rem 1rem !important;
-            font-weight: 700 !important;
         }
 
-        .stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea {
-            background: #0f172a !important;
-            color: #f8fafc !important;
-            border-radius: 14px !important;
-            border: 1px solid #475569 !important;
-            -webkit-text-fill-color: #f8fafc !important;
+        .stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea{
+            background:#0f172a !important;
+            color:#f8fafc !important;
+            border:1px solid #475569 !important;
+            border-radius:14px !important;
+            -webkit-text-fill-color:#f8fafc !important;
+        }
+        .stTextInput label,.stNumberInput label,.stDateInput label,.stTextArea label,.stSelectbox label,.stMultiSelect label{
+            color:#e2e8f0 !important;
+            font-weight:600 !important;
         }
 
-        .stTextInput label, .stNumberInput label, .stDateInput label, .stTextArea label, .stSelectbox label, .stMultiSelect label {
-            color: #e2e8f0 !important;
-            font-weight: 600 !important;
-        }
-
-        /* SELECTS FECHADOS */
         .stSelectbox div[data-baseweb="select"] > div,
-        .stMultiSelect div[data-baseweb="select"] > div {
-            background: #0f172a !important;
-            color: #f8fafc !important;
-            border-radius: 14px !important;
-            border: 1px solid #475569 !important;
+        .stMultiSelect div[data-baseweb="select"] > div{
+            background:#0f172a !important;
+            color:#f8fafc !important;
+            border:1px solid #475569 !important;
+            border-radius:14px !important;
         }
-
         .stSelectbox div[data-baseweb="select"] span,
         .stMultiSelect div[data-baseweb="select"] span,
         .stSelectbox div[data-baseweb="select"] input,
         .stMultiSelect div[data-baseweb="select"] input,
         .stSelectbox div[data-baseweb="select"] div,
-        .stMultiSelect div[data-baseweb="select"] div {
-            color: #f8fafc !important;
-            -webkit-text-fill-color: #f8fafc !important;
+        .stMultiSelect div[data-baseweb="select"] div{
+            color:#f8fafc !important;
+            -webkit-text-fill-color:#f8fafc !important;
+        }
+        .stSelectbox svg,.stMultiSelect svg{fill:#f8fafc !important;}
+
+        div[data-baseweb="popover"], div[data-baseweb="popover"] *{
+            background:#0f172a !important;
+            color:#f8fafc !important;
+            -webkit-text-fill-color:#f8fafc !important;
+        }
+        ul[role="listbox"], div[role="listbox"]{
+            background:#0f172a !important;
+            border:1px solid #475569 !important;
+            border-radius:14px !important;
+            box-shadow:0 18px 40px rgba(0,0,0,0.45) !important;
+        }
+        li[role="option"], div[role="option"], [role="option"]{
+            background:#0f172a !important;
+            color:#f8fafc !important;
+        }
+        li[role="option"]:hover, div[role="option"]:hover, [role="option"]:hover{
+            background:#1e293b !important;
+        }
+        li[aria-selected="true"], div[aria-selected="true"]{
+            background:#2563eb !important;
+            color:#fff !important;
         }
 
-        .stSelectbox svg, .stMultiSelect svg {
-            fill: #f8fafc !important;
+        .stTabs [data-baseweb="tab-list"]{
+            background:#111827;
+            border:1px solid var(--line);
+            padding:0.35rem;
+            border-radius:16px;
+            gap:0.35rem;
+        }
+        .stTabs [data-baseweb="tab"]{
+            color:#e2e8f0 !important;
+            border-radius:12px;
+            font-weight:700;
+            height:auto;
+            padding:0.7rem 0.95rem;
+        }
+        .stTabs [aria-selected="true"]{
+            background:#2563eb !important;
+            color:#ffffff !important;
+            border:1px solid #3b82f6 !important;
         }
 
-        /* DROPDOWNS ABERTOS */
-        div[data-baseweb="popover"] {
-            background: #0f172a !important;
-            color: #f8fafc !important;
+        div[data-testid="stDataFrame"], div[data-testid="stTable"]{
+            border:1px solid var(--line);
+            border-radius:16px;
+            overflow:hidden;
+            background:var(--card) !important;
         }
 
-        div[data-baseweb="popover"] * {
-            color: #f8fafc !important;
-            -webkit-text-fill-color: #f8fafc !important;
+        [data-testid="stInfo"]{
+            background:#082f49 !important;
+            color:#bae6fd !important;
+            border-radius:16px;
         }
-
-        ul[role="listbox"],
-        div[role="listbox"] {
-            background: #0f172a !important;
-            border: 1px solid #475569 !important;
-            border-radius: 14px !important;
-            box-shadow: 0 18px 40px rgba(0,0,0,0.45) !important;
+        [data-testid="stSuccess"]{
+            background:#052e16 !important;
+            color:#bbf7d0 !important;
+            border-radius:16px;
         }
-
-        li[role="option"],
-        div[role="option"],
-        [role="option"] {
-            background: #0f172a !important;
-            color: #f8fafc !important;
+        [data-testid="stWarning"]{
+            background:#451a03 !important;
+            color:#fed7aa !important;
+            border-radius:16px;
         }
-
-        li[role="option"]:hover,
-        div[role="option"]:hover,
-        [role="option"]:hover {
-            background: #1e293b !important;
-            color: #ffffff !important;
+        [data-testid="stError"]{
+            background:#450a0a !important;
+            color:#fecaca !important;
+            border-radius:16px;
         }
-
-        li[aria-selected="true"],
-        div[aria-selected="true"] {
-            background: #2563eb !important;
-            color: #ffffff !important;
-        }
-
-        /* TABS */
-        .stTabs [data-baseweb="tab-list"] {
-            background: #111827;
-            border: 1px solid var(--line);
-            padding: 0.35rem;
-            border-radius: 16px;
-            gap: 0.35rem;
-        }
-
-        .stTabs [data-baseweb="tab"] {
-            height: auto;
-            padding: 0.7rem 0.95rem;
-            border-radius: 12px;
-            color: #e2e8f0 !important;
-            font-weight: 700;
-        }
-
-        .stTabs [aria-selected="true"] {
-            background: #2563eb !important;
-            color: #ffffff !important;
-            border: 1px solid #3b82f6 !important;
-        }
-
-        div[data-testid="stDataFrame"], div[data-testid="stTable"] {
-            border: 1px solid var(--line);
-            border-radius: 16px;
-            overflow: hidden;
-            background: var(--card) !important;
-        }
-
-        [data-testid="stInfo"] {
-            background: #082f49 !important;
-            color: #bae6fd !important;
-            font-weight: 600 !important;
-            border-radius: 16px;
-        }
-
-        [data-testid="stSuccess"] {
-            background: #052e16 !important;
-            color: #bbf7d0 !important;
-            border-radius: 16px;
-        }
-
-        [data-testid="stWarning"] {
-            background: #451a03 !important;
-            color: #fed7aa !important;
-            border-radius: 16px;
-        }
-
-        [data-testid="stError"] {
-            background: #450a0a !important;
-            color: #fecaca !important;
-            border-radius: 16px;
-        }
-
-        .soft {
-            color: var(--muted) !important;
-        }
+        .soft{color:var(--muted) !important;}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
-
-def hero(title: str, subtitle: str):
-    st.markdown(
-        f"""
-        <div class="hero">
-            <h1>{title}</h1>
-            <p>{subtitle}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def hero(title, subtitle):
+    st.markdown(f'<div class="hero"><h1>{title}</h1><p>{subtitle}</p></div>', unsafe_allow_html=True)
 
 
 def card_start():
@@ -555,29 +591,26 @@ def card_end():
     st.markdown('</div>', unsafe_allow_html=True)
 
 
-# =========================================================
-# AUTH
-# =========================================================
-def register_user(username: str, password: str, full_name: str):
+def register_user(username, password, full_name):
     users = st.session_state.app_data["users"]
     if username in users:
         return False, "Esse usuário já existe."
     users[username] = {
         "password_hash": hash_password(password),
-        "profile": empty_user_profile(full_name),
+        "profile": {"full_name": full_name, "created_at": datetime.now().isoformat()},
         "patients": [],
         "plans": [],
         "diary": [],
         "history": [],
         "tasks": [],
+        "notes": [],
         "study_progress": {},
-        "crm_notes": [],
     }
     save_data()
-    return True, "Conta criada com sucesso."
+    return True, "Conta criada."
 
 
-def login_user(username: str, password: str):
+def login_user(username, password):
     users = st.session_state.app_data["users"]
     if username not in users:
         return False
@@ -587,68 +620,43 @@ def login_user(username: str, password: str):
     return True
 
 
-def logout():
-    st.session_state.auth_user = None
-
-
 def auth_screen():
-    hero(APP_NAME, "Visual de SaaS real, gestão de pacientes, dieta, estudos e rotina profissional")
-
+    hero(APP_NAME, "Sistema para acompanhamento nutricional")
     c1, c2 = st.columns(2)
-
     with c1:
         card_start()
         st.subheader("Entrar")
         username = st.text_input("Usuário", key="login_user")
-        password = st.text_input("Senha", type="password", key="login_pass")
+        password = st.text_input("Senha", key="login_pass", type="password")
         if st.button("Entrar", use_container_width=True):
             if login_user(username.strip(), password):
-                st.success("Login realizado.")
                 st.rerun()
             else:
                 st.error("Usuário ou senha inválidos.")
         card_end()
-
     with c2:
         card_start()
         st.subheader("Criar conta")
-        full_name = st.text_input("Nome completo", key="reg_name")
-        new_user = st.text_input("Novo usuário", key="reg_user")
-        new_pass = st.text_input("Nova senha", type="password", key="reg_pass")
+        full_name = st.text_input("Nome", key="reg_name")
+        username = st.text_input("Usuário", key="reg_user")
+        password = st.text_input("Senha", key="reg_pass", type="password")
         if st.button("Criar conta", use_container_width=True):
-            if not full_name.strip() or not new_user.strip() or not new_pass.strip():
-                st.error("Preencha todos os campos.")
+            if not full_name.strip() or not username.strip() or not password.strip():
+                st.error("Preencha tudo.")
             else:
-                ok, msg = register_user(new_user.strip(), new_pass, full_name.strip())
+                ok, msg = register_user(username.strip(), password, full_name.strip())
                 if ok:
                     st.success(msg)
                 else:
                     st.error(msg)
         card_end()
 
-    card_start()
-    st.subheader("O que esta versão tem")
-    st.markdown(
-        "- login local por usuário\n"
-        "- gestão separada por conta\n"
-        "- painel com pacientes, planos, tarefas e histórico\n"
-        "- exportação CSV e ficha HTML do paciente\n"
-        "- CRM simples de acompanhamento\n"
-        "- centro de estudos e rotina profissional\n"
-        "- layout otimizado para ficar mais leve"
-    )
-    card_end()
 
-
-# =========================================================
-# APP
-# =========================================================
 st.set_page_config(page_title=APP_NAME, page_icon="🥗", layout="wide", initial_sidebar_state="expanded")
 inject_css()
 
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_data()
-
 if "auth_user" not in st.session_state:
     st.session_state.auth_user = None
 
@@ -658,7 +666,6 @@ if not st.session_state.auth_user:
 
 user = current_user()
 foods = st.session_state.app_data["shared_foods"]
-
 today_entries = [x for x in user["diary"] if x["data"].date() == date.today()]
 today_kcal = sum(x["kcal"] for x in today_entries)
 today_protein = sum(x["protein"] for x in today_entries)
@@ -667,132 +674,81 @@ today_fat = sum(x["fat"] for x in today_entries)
 
 with st.sidebar:
     st.markdown(f"## {APP_NAME}")
-    st.markdown(f"**{user['profile']['full_name']}**")
-    st.markdown('<p class="soft">Painel estilo SaaS para gestão e prática em Nutrição.</p>', unsafe_allow_html=True)
+    st.markdown(f'**{user["profile"]["full_name"]}**')
+    st.markdown('<p class="soft">Área interna</p>', unsafe_allow_html=True)
 
-    page = st.selectbox(
-        "Menu principal",
-        [
-            "Dashboard",
-            "Pacientes",
-            "Planos Alimentares",
-            "Diário Alimentar",
-            "Calculadoras",
-            "CRM e Tarefas",
-            "Análises",
-            "Faculdade e Estudos",
-            "Configurações",
-        ],
-    )
-
+    page = st.selectbox("Menu", ["Resumo", "Pacientes", "Planos", "Diário", "Cálculos", "IA", "Tarefas", "Análises", "Estudos", "Configurações"])
     st.markdown("---")
-    st.markdown("### Resumo")
-    st.markdown(f"**Calorias hoje:** {today_kcal:.0f} kcal")
-    st.markdown(f"**Proteínas:** {today_protein:.1f} g")
+    st.markdown(f"**Kcal hoje:** {today_kcal:.0f}")
     st.markdown(f"**Pacientes:** {len(user['patients'])}")
     st.markdown(f"**Planos:** {len(user['plans'])}")
     st.markdown(f"**Tarefas:** {len(user['tasks'])}")
-
     if st.button("Sair", use_container_width=True):
-        logout()
+        st.session_state.auth_user = None
         st.rerun()
 
-
-# =========================================================
-# PAGES
-# =========================================================
-if page == "Dashboard":
-    hero("Dashboard", "Sua central de operação para atendimento, faculdade e rotina diária")
-
+if page == "Resumo":
+    hero("Resumo", "Visão rápida do dia")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Pacientes", len(user["patients"]))
-    c2.metric("Planos salvos", len(user["plans"]))
-    c3.metric("Registros no diário", len(user["diary"]))
-    c4.metric("Tarefas", len(user["tasks"]))
+    c1.metric("Kcal", f"{today_kcal:.0f}")
+    c2.metric("Proteína", f"{today_protein:.1f} g")
+    c3.metric("Carboidratos", f"{today_carbs:.1f} g")
+    c4.metric("Gorduras", f"{today_fat:.1f} g")
 
-    left, right = st.columns([1.15, 0.85])
-
+    left, right = st.columns([1.1, 0.9])
     with left:
         card_start()
-        st.subheader("Visão do dia")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Kcal", f"{today_kcal:.0f}")
-        m2.metric("Proteína", f"{today_protein:.1f} g")
-        m3.metric("Carboidratos", f"{today_carbs:.1f} g")
-        m4.metric("Gorduras", f"{today_fat:.1f} g")
-
+        st.subheader("Hoje")
         if today_entries:
-            df = pd.DataFrame(
-                [
-                    {
-                        "Data": x["data"].strftime("%d/%m/%Y"),
-                        "Refeição": x["meal"],
-                        "Alimento": x["food"],
-                        "Porções": x["servings"],
-                        "Kcal": round(x["kcal"], 1),
-                        "Proteína": round(x["protein"], 1),
-                    }
-                    for x in today_entries
-                ]
-            )
+            df = pd.DataFrame([{
+                "Refeição": x["meal"], "Alimento": x["food"], "Porções": x["servings"],
+                "Kcal": round(x["kcal"], 1), "Proteína": round(x["protein"], 1)
+            } for x in today_entries])
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
-            st.info("Ainda não há registros hoje.")
+            st.info("Nenhum registro hoje.")
         card_end()
 
         card_start()
-        st.subheader("Últimos movimentos")
+        st.subheader("Histórico")
         if user["history"]:
-            hist = sorted(user["history"], key=lambda x: x["data"], reverse=True)[:10]
-            df_hist = pd.DataFrame(
-                [{"Data": x["data"].strftime("%d/%m/%Y %H:%M"), "Tipo": x["tipo"], "Descrição": x["descricao"]} for x in hist]
-            )
-            st.dataframe(df_hist, use_container_width=True, hide_index=True)
+            hist = pd.DataFrame([{
+                "Data": x["data"].strftime("%d/%m/%Y %H:%M"),
+                "Tipo": x["tipo"],
+                "Descrição": x["descricao"]
+            } for x in sorted(user["history"], key=lambda x: x["data"], reverse=True)[:10]])
+            st.dataframe(hist, use_container_width=True, hide_index=True)
         else:
-            st.info("Nenhum histórico ainda.")
+            st.info("Nada por enquanto.")
         card_end()
-
     with right:
         card_start()
         st.subheader("Pendências")
         pending = [x for x in user["tasks"] if not x.get("done")]
         if pending:
             for task in pending[:8]:
-                st.markdown(f"- **{task['title']}** — {task['area']}")
+                st.markdown(f"- {task['title']}")
         else:
-            st.info("Nenhuma pendência em aberto.")
+            st.info("Sem pendências.")
         card_end()
 
-        card_start()
-        st.subheader("Mapa rápido da formação")
-        for area, topics in STUDY_AREAS.items():
-            st.markdown(f"**{area}**")
-            st.write(" • " + " • ".join(topics))
-        card_end()
-
-
-elif page == "Pacientes":
-    hero("Pacientes", "Cadastro, avaliação inicial e exportação rápida")
-
-    tab1, tab2 = st.tabs(["Novo paciente", "Base de pacientes"])
+if page == "Pacientes":
+    hero("Pacientes", "Cadastro e ficha")
+    tab1, tab2 = st.tabs(["Novo", "Lista"])
 
     with tab1:
         card_start()
-        st.subheader("Cadastrar paciente")
         c1, c2, c3 = st.columns(3)
         name = c1.text_input("Nome")
         age = c2.number_input("Idade", min_value=0, step=1)
         sex = c3.selectbox("Sexo", ["Masculino", "Feminino"])
-
         c4, c5, c6 = st.columns(3)
         weight = c4.number_input("Peso (kg)", min_value=0.0, step=0.1)
         height = c5.number_input("Altura (cm)", min_value=0.0, step=1.0)
         activity = c6.selectbox("Atividade", list(ACTIVITY_FACTORS.keys()))
-
-        goal = st.selectbox("Objetivo principal", ["Emagrecimento", "Hipertrofia", "Performance", "Saúde geral", "Melhora clínica"])
+        goal = st.selectbox("Objetivo", ["Emagrecimento", "Hipertrofia", "Performance", "Saúde geral", "Melhora clínica"])
         complaint = st.text_area("Queixa principal")
-        notes = st.text_area("Hábitos, observações e contexto")
-
+        notes = st.text_area("Observações")
         if st.button("Salvar paciente"):
             if name.strip() and age > 0 and weight > 0 and height > 0:
                 bmi = calc_bmi(weight, height / 100)
@@ -816,112 +772,90 @@ elif page == "Pacientes":
                 }
                 user["patients"].append(patient)
                 save_data()
-                add_history("Paciente", f"Paciente {patient['name']} cadastrado")
-                st.success("Paciente salvo com sucesso.")
+                add_history("Paciente", f'{patient["name"]} cadastrado')
+                st.success("Paciente salvo.")
             else:
                 st.error("Preencha nome, idade, peso e altura.")
         card_end()
 
     with tab2:
         card_start()
-        st.subheader("Pacientes salvos")
         patients = sorted(user["patients"], key=lambda x: x["data"], reverse=True)
-
         if patients:
-            table = pd.DataFrame(
-                [
-                    {
-                        "ID": p["id"],
-                        "Nome": p["name"],
-                        "Objetivo": p["goal"],
-                        "IMC": p["bmi"],
-                        "TDEE": p["tdee"],
-                        "Data": p["data"].strftime("%d/%m/%Y"),
-                    }
-                    for p in patients
-                ]
-            )
-            st.dataframe(table, use_container_width=True, hide_index=True)
-            st.download_button(
-                "Exportar pacientes em CSV",
-                data=export_csv_bytes(table),
-                file_name="pacientes_nutriflow.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-
+            df = pd.DataFrame([{
+                "ID": p["id"], "Nome": p["name"], "Objetivo": p["goal"],
+                "IMC": p["bmi"], "TDEE": p["tdee"], "Data": p["data"].strftime("%d/%m/%Y")
+            } for p in patients])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.download_button("Exportar CSV", data=df.to_csv(index=False).encode("utf-8-sig"),
+                               file_name="pacientes.csv", mime="text/csv")
+            plan_map = {p["id"]: [pl for pl in user["plans"] if pl.get("patient_id") == p["id"]] for p in patients}
             for p in patients:
-                with st.expander(f"{p['name']} — {p['goal']}"):
+                with st.expander(p["name"]):
                     m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("IMC", f"{p['bmi']:.2f}")
+                    m1.metric("IMC", f'{p["bmi"]:.2f}')
                     m2.metric("Classificação", p["bmi_class"])
-                    m3.metric("TMB", f"{p['bmr']:.0f}")
-                    m4.metric("TDEE", f"{p['tdee']:.0f}")
-                    st.write(f"**Queixa principal:** {p['complaint'] or 'Não informada'}")
-                    st.write(f"**Observações:** {p['notes'] or 'Sem observações'}")
-
-                    html = patient_report_html(p).encode("utf-8")
+                    m3.metric("TMB", f'{p["bmr"]:.0f}')
+                    m4.metric("TDEE", f'{p["tdee"]:.0f}')
+                    st.write(f'**Queixa:** {p["complaint"] or "-"}')
+                    st.write(f'**Observações:** {p["notes"] or "-"}')
+                    linked_plans = plan_map[p["id"]]
+                    selected_plan = None
+                    if linked_plans:
+                        selected_name = st.selectbox(
+                            "Plano para incluir no PDF",
+                            ["Nenhum"] + [pl["name"] for pl in linked_plans],
+                            key=f'plan_select_{p["id"]}'
+                        )
+                        if selected_name != "Nenhum":
+                            selected_plan = next(pl for pl in linked_plans if pl["name"] == selected_name)
+                    pdf_bytes = make_patient_pdf_bytes(p, selected_plan)
                     st.download_button(
-                        f"Baixar ficha HTML - {p['name']}",
-                        data=html,
-                        file_name=f"ficha_{p['name'].replace(' ', '_').lower()}.html",
-                        mime="text/html",
-                        key=f"dl_{p['id']}",
+                        "Baixar PDF",
+                        data=pdf_bytes,
+                        file_name=f'ficha_{slugify(p["name"])}.pdf',
+                        mime="application/pdf",
+                        key=f'pdf_{p["id"]}'
                     )
         else:
             st.info("Nenhum paciente salvo.")
         card_end()
 
-
-elif page == "Planos Alimentares":
-    hero("Planos Alimentares", "Monte modelos rápidos com cálculo automático")
-
-    tab1, tab2 = st.tabs(["Criar plano", "Planos salvos"])
-
+if page == "Planos":
+    hero("Planos", "Montagem simples")
+    tab1, tab2 = st.tabs(["Novo", "Salvos"])
     with tab1:
         card_start()
-        st.subheader("Novo plano")
         plan_name = st.text_input("Nome do plano")
         objective = st.selectbox("Objetivo", ["Manutenção", "Emagrecimento", "Hipertrofia", "Reeducação alimentar", "Performance"])
-        kcal_target = st.number_input("Meta calórica", min_value=0, step=50)
-        meals = st.multiselect("Refeições", ["Café da manhã", "Lanche manhã", "Almoço", "Lanche tarde", "Jantar", "Ceia"])
+        patient_options = ["Sem vínculo"] + [f'{p["name"]} ({p["id"]})' for p in user["patients"]]
+        patient_selected = st.selectbox("Paciente", patient_options)
         selected_foods = st.multiselect("Alimentos", list(foods.keys()))
-
         portions = {}
         for food in selected_foods:
             portions[food] = st.number_input(f"Porções de {food}", min_value=0.1, step=0.1, value=1.0, key=f"portion_{food}")
-
         if st.button("Salvar plano"):
             if not plan_name.strip():
-                st.error("Dê um nome ao plano.")
+                st.error("Dê um nome.")
             elif not selected_foods:
-                st.error("Selecione ao menos um alimento.")
+                st.error("Selecione os alimentos.")
             else:
                 items = []
                 total_kcal = total_p = total_c = total_f = 0.0
                 for food in selected_foods:
-                    item = foods[food]
+                    base = foods[food]
                     q = portions[food]
-                    row = {
-                        "food": food,
-                        "servings": q,
-                        "kcal": item["kcal"] * q,
-                        "protein": item["protein"] * q,
-                        "carbs": item["carbs"] * q,
-                        "fat": item["fat"] * q,
-                    }
+                    row = {"food": food, "servings": q, "kcal": base["kcal"]*q, "protein": base["protein"]*q, "carbs": base["carbs"]*q, "fat": base["fat"]*q}
                     items.append(row)
-                    total_kcal += row["kcal"]
-                    total_p += row["protein"]
-                    total_c += row["carbs"]
-                    total_f += row["fat"]
-
+                    total_kcal += row["kcal"]; total_p += row["protein"]; total_c += row["carbs"]; total_f += row["fat"]
+                patient_id = None
+                if patient_selected != "Sem vínculo":
+                    patient_id = patient_selected.split("(")[-1].replace(")", "")
                 plan = {
                     "id": f"PL-{int(datetime.now().timestamp())}",
+                    "patient_id": patient_id,
                     "name": plan_name.strip(),
                     "objective": objective,
-                    "kcal_target": kcal_target,
-                    "meals": meals,
                     "items": items,
                     "total_kcal": round(total_kcal, 1),
                     "total_protein": round(total_p, 1),
@@ -931,87 +865,62 @@ elif page == "Planos Alimentares":
                 }
                 user["plans"].append(plan)
                 save_data()
-                add_history("Plano", f"Plano {plan['name']} salvo")
-                st.success("Plano salvo com sucesso.")
+                add_history("Plano", f'{plan["name"]} salvo')
+                st.success("Plano salvo.")
         card_end()
-
     with tab2:
         card_start()
-        st.subheader("Planos salvos")
         plans = sorted(user["plans"], key=lambda x: x["data"], reverse=True)
         if plans:
             for plan in plans:
-                with st.expander(f"{plan['name']} — {plan['objective']}"):
+                with st.expander(plan["name"]):
                     m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Kcal total", f"{plan['total_kcal']:.0f}")
-                    m2.metric("Proteína", f"{plan['total_protein']:.1f} g")
-                    m3.metric("Carboidratos", f"{plan['total_carbs']:.1f} g")
-                    m4.metric("Gorduras", f"{plan['total_fat']:.1f} g")
-                    rows = pd.DataFrame(
-                        [
-                            {
-                                "Alimento": i["food"],
-                                "Porções": i["servings"],
-                                "Kcal": i["kcal"],
-                                "Proteína": i["protein"],
-                                "Carboidratos": i["carbs"],
-                                "Gorduras": i["fat"],
-                            }
-                            for i in plan["items"]
-                        ]
-                    )
-                    st.dataframe(rows, use_container_width=True, hide_index=True)
+                    m1.metric("Kcal", f'{plan["total_kcal"]:.0f}')
+                    m2.metric("Proteína", f'{plan["total_protein"]:.1f} g')
+                    m3.metric("Carboidratos", f'{plan["total_carbs"]:.1f} g')
+                    m4.metric("Gorduras", f'{plan["total_fat"]:.1f} g')
+                    df = pd.DataFrame([{
+                        "Alimento": i["food"], "Porções": i["servings"], "Kcal": i["kcal"],
+                        "Proteína": i["protein"], "Carboidratos": i["carbs"], "Gorduras": i["fat"]
+                    } for i in plan["items"]])
+                    st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("Nenhum plano salvo.")
         card_end()
 
-
-elif page == "Diário Alimentar":
-    hero("Diário Alimentar", "Registre refeições e use isso como base de análise real")
-
-    left, right = st.columns([1.02, 0.98])
-
+if page == "Diário":
+    hero("Diário", "Registros do dia")
+    left, right = st.columns([1.0, 1.0])
     with left:
         card_start()
-        st.subheader("Adicionar refeição")
         meal = st.selectbox("Refeição", ["Café da manhã", "Lanche manhã", "Almoço", "Lanche tarde", "Jantar", "Ceia"])
         food = st.selectbox("Alimento", list(foods.keys()))
         servings = st.number_input("Porções", min_value=0.1, step=0.1, value=1.0)
         entry_date = st.date_input("Data", value=date.today())
-
         if st.button("Adicionar ao diário"):
-            item = foods[food]
+            base = foods[food]
             entry = {
                 "id": f"DG-{int(datetime.now().timestamp())}",
-                "meal": meal,
-                "food": food,
-                "servings": servings,
-                "kcal": item["kcal"] * servings,
-                "protein": item["protein"] * servings,
-                "carbs": item["carbs"] * servings,
-                "fat": item["fat"] * servings,
-                "fiber": item["fiber"] * servings,
+                "meal": meal, "food": food, "servings": servings,
+                "kcal": base["kcal"]*servings, "protein": base["protein"]*servings,
+                "carbs": base["carbs"]*servings, "fat": base["fat"]*servings, "fiber": base["fiber"]*servings,
                 "data": datetime.combine(entry_date, datetime.min.time()),
             }
             user["diary"].append(entry)
             save_data()
-            add_history("Diário", f"{food} adicionado ao diário")
+            add_history("Diário", f"{food} adicionado")
             st.success("Registro salvo.")
         card_end()
 
         card_start()
         st.subheader("Banco de alimentos")
-        search = st.text_input("Buscar alimento")
+        search = st.text_input("Buscar")
         filtered = {k: v for k, v in foods.items() if search.lower() in k.lower()} if search else foods
-        df_foods = pd.DataFrame(
-            [
-                {"Alimento": k, "Kcal": v["kcal"], "Proteína": v["protein"], "Carboidratos": v["carbs"], "Gorduras": v["fat"], "Fibra": v["fiber"]}
-                for k, v in filtered.items()
-            ]
-        )
+        df_foods = pd.DataFrame([{
+            "Alimento": k, "Kcal": v["kcal"], "Proteína": v["protein"], "Carboidratos": v["carbs"], "Gorduras": v["fat"], "Fibra": v["fiber"]
+        } for k, v in filtered.items()])
         st.dataframe(df_foods, use_container_width=True, hide_index=True)
-
-        with st.expander("Adicionar novo alimento"):
+        with st.expander("Adicionar alimento"):
             fname = st.text_input("Nome do alimento")
             c1, c2, c3 = st.columns(3)
             kcal = c1.number_input("Kcal", min_value=0.0, step=1.0)
@@ -1022,55 +931,36 @@ elif page == "Diário Alimentar":
             fiber = c5.number_input("Fibra", min_value=0.0, step=0.1)
             if st.button("Salvar alimento"):
                 if fname.strip():
-                    st.session_state.app_data["shared_foods"][fname.strip()] = {
-                        "kcal": kcal, "protein": protein, "carbs": carbs, "fat": fat, "fiber": fiber
-                    }
+                    st.session_state.app_data["shared_foods"][fname.strip()] = {"kcal": kcal, "protein": protein, "carbs": carbs, "fat": fat, "fiber": fiber}
                     save_data()
                     st.success("Alimento salvo.")
                 else:
-                    st.error("Digite o nome do alimento.")
+                    st.error("Digite o nome.")
         card_end()
-
     with right:
         card_start()
-        st.subheader("Resumo por data")
-        selected_date = st.date_input("Visualizar dia", value=date.today(), key="view_date")
-        rows = [x for x in user["diary"] if x["data"].date() == selected_date]
-
+        view_date = st.date_input("Ver data", value=date.today(), key="view_date")
+        rows = [x for x in user["diary"] if x["data"].date() == view_date]
         if rows:
-            df = pd.DataFrame(
-                [
-                    {
-                        "Refeição": x["meal"],
-                        "Alimento": x["food"],
-                        "Porções": x["servings"],
-                        "Kcal": round(x["kcal"], 1),
-                        "Proteína": round(x["protein"], 1),
-                        "Carboidratos": round(x["carbs"], 1),
-                        "Gorduras": round(x["fat"], 1),
-                    }
-                    for x in rows
-                ]
-            )
+            df = pd.DataFrame([{
+                "Refeição": x["meal"], "Alimento": x["food"], "Porções": x["servings"], "Kcal": round(x["kcal"], 1),
+                "Proteína": round(x["protein"], 1), "Carboidratos": round(x["carbs"], 1), "Gorduras": round(x["fat"], 1)
+            } for x in rows])
             st.dataframe(df, use_container_width=True, hide_index=True)
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Kcal", f"{df['Kcal'].sum():.0f}")
-            m2.metric("Proteína", f"{df['Proteína'].sum():.1f} g")
-            m3.metric("Carboidratos", f"{df['Carboidratos'].sum():.1f} g")
-            m4.metric("Gorduras", f"{df['Gorduras'].sum():.1f} g")
+            m1.metric("Kcal", f'{df["Kcal"].sum():.0f}')
+            m2.metric("Proteína", f'{df["Proteína"].sum():.1f} g')
+            m3.metric("Carboidratos", f'{df["Carboidratos"].sum():.1f} g')
+            m4.metric("Gorduras", f'{df["Gorduras"].sum():.1f} g')
         else:
-            st.info("Nenhum registro nessa data.")
+            st.info("Sem registros nessa data.")
         card_end()
 
-
-elif page == "Calculadoras":
-    hero("Calculadoras", "Ferramentas rápidas para clínica, estudo e tomada de decisão")
-
-    tab1, tab2, tab3, tab4 = st.tabs(["IMC", "TMB/TDEE", "Meta Calórica", "Macros"])
-
+if page == "Cálculos":
+    hero("Cálculos", "Ferramentas básicas")
+    tab1, tab2, tab3, tab4 = st.tabs(["IMC", "TMB/TDEE", "Meta", "Macros"])
     with tab1:
         card_start()
-        st.subheader("IMC")
         c1, c2 = st.columns(2)
         weight = c1.number_input("Peso (kg)", min_value=0.0, step=0.1)
         height = c2.number_input("Altura (m)", min_value=0.0, step=0.01)
@@ -1078,21 +968,18 @@ elif page == "Calculadoras":
             bmi = calc_bmi(weight, height)
             if bmi:
                 st.success(f"IMC: {bmi:.2f} — {bmi_label(bmi)}")
-                add_history("IMC", f"IMC calculado: {bmi:.2f}")
             else:
                 st.error("Preencha valores válidos.")
         card_end()
-
     with tab2:
         card_start()
-        st.subheader("TMB e TDEE")
         c1, c2, c3 = st.columns(3)
-        w = c1.number_input("Peso (kg)", min_value=0.0, step=0.1, key="tdee_w")
-        h = c2.number_input("Altura (cm)", min_value=0.0, step=1.0, key="tdee_h")
-        age = c3.number_input("Idade", min_value=0, step=1, key="tdee_age")
+        w = c1.number_input("Peso (kg)", min_value=0.0, step=0.1, key="t_w")
+        h = c2.number_input("Altura (cm)", min_value=0.0, step=1.0, key="t_h")
+        age = c3.number_input("Idade", min_value=0, step=1, key="t_age")
         c4, c5 = st.columns(2)
-        sex = c4.selectbox("Sexo", ["Masculino", "Feminino"], key="tdee_sex")
-        activity = c5.selectbox("Atividade", list(ACTIVITY_FACTORS.keys()), key="tdee_act")
+        sex = c4.selectbox("Sexo", ["Masculino", "Feminino"], key="t_sex")
+        activity = c5.selectbox("Atividade", list(ACTIVITY_FACTORS.keys()), key="t_act")
         if st.button("Calcular TMB/TDEE"):
             if w > 0 and h > 0 and age > 0:
                 bmr, tdee = calc_tdee(w, h, age, sex, activity)
@@ -1100,36 +987,30 @@ elif page == "Calculadoras":
                 m1.metric("TMB", f"{bmr:.0f}")
                 m2.metric("TDEE", f"{tdee:.0f}")
                 m3.metric("Déficit leve", f"{tdee*0.9:.0f}")
-                add_history("TMB/TDEE", f"TMB {bmr:.0f} | TDEE {tdee:.0f}")
             else:
                 st.error("Preencha tudo.")
         card_end()
-
     with tab3:
         card_start()
-        st.subheader("Meta por objetivo")
         c1, c2, c3 = st.columns(3)
-        w = c1.number_input("Peso (kg)", min_value=0.0, step=0.1, key="goal_w")
-        h = c2.number_input("Altura (cm)", min_value=0.0, step=1.0, key="goal_h")
-        age = c3.number_input("Idade", min_value=0, step=1, key="goal_age")
+        w = c1.number_input("Peso (kg)", min_value=0.0, step=0.1, key="g_w")
+        h = c2.number_input("Altura (cm)", min_value=0.0, step=1.0, key="g_h")
+        age = c3.number_input("Idade", min_value=0, step=1, key="g_age")
         c4, c5, c6 = st.columns(3)
-        sex = c4.selectbox("Sexo", ["Masculino", "Feminino"], key="goal_sex")
-        activity = c5.selectbox("Atividade", list(ACTIVITY_FACTORS.keys()), key="goal_act")
+        sex = c4.selectbox("Sexo", ["Masculino", "Feminino"], key="g_sex")
+        activity = c5.selectbox("Atividade", list(ACTIVITY_FACTORS.keys()), key="g_act")
         goal = c6.selectbox("Objetivo", ["Manutenção", "Déficit leve", "Déficit moderado", "Ganho leve"])
         if st.button("Calcular meta"):
             if w > 0 and h > 0 and age > 0:
                 _, tdee = calc_tdee(w, h, age, sex, activity)
                 factor = {"Manutenção": 1.0, "Déficit leve": 0.9, "Déficit moderado": 0.85, "Ganho leve": 1.1}[goal]
                 target = tdee * factor
-                st.success(f"Meta estimada: {target:.0f} kcal/dia")
-                add_history("Meta Calórica", f"{goal}: {target:.0f} kcal")
+                st.success(f"Meta: {target:.0f} kcal/dia")
             else:
                 st.error("Preencha tudo.")
         card_end()
-
     with tab4:
         card_start()
-        st.subheader("Macronutrientes")
         kcal = st.number_input("Calorias diárias", min_value=0, step=50)
         c1, c2, c3 = st.columns(3)
         pp = c1.slider("Proteína (%)", 10, 45, 30)
@@ -1142,186 +1023,125 @@ elif page == "Calculadoras":
                 m1.metric("Proteína", f"{p:.1f} g")
                 m2.metric("Carboidratos", f"{c:.1f} g")
                 m3.metric("Gorduras", f"{f:.1f} g")
-                fig = px.pie(names=["Proteína", "Carboidratos", "Gorduras"], values=[pp, cp, fp], title="Distribuição (%)")
-                st.plotly_chart(fig, use_container_width=True)
-                add_history("Macros", f"Distribuição para {kcal} kcal")
             else:
-                st.error("Informe calorias e faça a soma dar 100%.")
+                st.error("A soma precisa dar 100.")
         card_end()
 
+if page == "IA":
+    hero("IA", "Rascunho rápido")
+    card_start()
+    st.subheader("Gerar texto")
+    patient_options = ["Sem paciente"] + [f'{p["name"]} ({p["id"]})' for p in user["patients"]]
+    chosen = st.selectbox("Paciente", patient_options)
+    selected_patient = None
+    if chosen != "Sem paciente":
+        pid = chosen.split("(")[-1].replace(")", "")
+        selected_patient = next((p for p in user["patients"] if p["id"] == pid), None)
 
-elif page == "CRM e Tarefas":
-    hero("CRM e Tarefas", "Organize follow-up, pendências e relacionamento com seus pacientes")
+    prompt_type = st.selectbox("Tipo", ["Plano alimentar inicial", "Orientações para consulta", "Mensagem simples para paciente", "Resumo do caso"])
+    extra = st.text_area("Pedido", placeholder="Ex.: montar um rascunho com café da manhã, almoço, jantar e lanches simples.")
+    default_prompt = {
+        "Plano alimentar inicial": "Monte um rascunho inicial de plano alimentar com refeições simples.",
+        "Orientações para consulta": "Escreva orientações curtas para a próxima consulta.",
+        "Mensagem simples para paciente": "Escreva uma mensagem curta e natural para enviar ao paciente.",
+        "Resumo do caso": "Resuma o caso em linguagem simples para prontuário.",
+    }[prompt_type]
+    final_prompt = f"{default_prompt}\n{extra}".strip()
 
+    if st.button("Gerar com IA"):
+        with st.spinner("Gerando..."):
+            try:
+                output = run_ai(final_prompt, selected_patient)
+                st.session_state["ai_output"] = output
+                add_history("IA", f"Geração: {prompt_type}")
+            except Exception as e:
+                st.error(str(e))
+
+    output = st.session_state.get("ai_output", "")
+    if output:
+        st.text_area("Resultado", value=output, height=320)
+        st.download_button("Baixar texto", data=output.encode("utf-8"), file_name="rascunho_ia.txt", mime="text/plain")
+    st.caption("Se quiser usar IA, configure OPENAI_API_KEY. O app usa a API Responses no SDK oficial.")
+    card_end()
+
+if page == "Tarefas":
+    hero("Tarefas", "Lista simples")
     left, right = st.columns(2)
-
     with left:
         card_start()
-        st.subheader("Nova tarefa")
-        title = st.text_input("Título da tarefa")
-        area = st.selectbox("Área", ["Paciente", "Estudo", "Administrativo", "Conteúdo", "Financeiro"])
+        title = st.text_input("Título")
+        area = st.selectbox("Área", ["Paciente", "Estudo", "Administração", "Financeiro", "Outro"])
         due = st.date_input("Prazo", value=date.today())
         if st.button("Salvar tarefa"):
             if title.strip():
-                user["tasks"].append({
-                    "title": title.strip(),
-                    "area": area,
-                    "due": due.isoformat(),
-                    "done": False,
-                    "data": datetime.now(),
-                })
+                user["tasks"].append({"title": title.strip(), "area": area, "due": due.isoformat(), "done": False, "data": datetime.now()})
                 save_data()
-                add_history("Tarefa", f"Tarefa criada: {title.strip()}")
+                add_history("Tarefa", f"{title.strip()} criada")
                 st.success("Tarefa salva.")
             else:
-                st.error("Digite um título.")
+                st.error("Digite o título.")
         card_end()
-
-        card_start()
-        st.subheader("Anotação rápida de relacionamento")
-        patient_names = [p["name"] for p in user["patients"]] or ["Sem pacientes cadastrados"]
-        linked_patient = st.selectbox("Paciente vinculado", patient_names)
-        note = st.text_area("Observação")
-        if st.button("Salvar anotação"):
-            if patient_names[0] == "Sem pacientes cadastrados":
-                st.error("Cadastre um paciente primeiro.")
-            elif note.strip():
-                user["crm_notes"].append({
-                    "patient": linked_patient,
-                    "note": note.strip(),
-                    "data": datetime.now(),
-                })
-                save_data()
-                add_history("CRM", f"Nota adicionada para {linked_patient}")
-                st.success("Anotação salva.")
-            else:
-                st.error("Escreva uma observação.")
-        card_end()
-
     with right:
         card_start()
-        st.subheader("Painel de tarefas")
         if user["tasks"]:
-            for idx, task in enumerate(sorted(user["tasks"], key=lambda x: (x.get("done", False), x["due"]))):
-                col1, col2 = st.columns([0.75, 0.25])
-                done = col1.checkbox(
-                    f"{task['title']} — {task['area']} — prazo {task['due']}",
-                    value=task.get("done", False),
-                    key=f"task_{idx}_{task['title']}",
-                )
+            for i, task in enumerate(sorted(user["tasks"], key=lambda x: (x.get("done", False), x["due"]))):
+                cols = st.columns([0.75, 0.25])
+                done = cols[0].checkbox(f'{task["title"]} — {task["area"]} — {task["due"]}', value=task.get("done", False), key=f'task_{i}')
                 user["tasks"][user["tasks"].index(task)]["done"] = done
-                if col2.button("Excluir", key=f"del_{idx}"):
+                if cols[1].button("Excluir", key=f"del_{i}"):
                     user["tasks"].remove(task)
                     save_data()
                     st.rerun()
             save_data()
         else:
-            st.info("Nenhuma tarefa cadastrada.")
+            st.info("Nenhuma tarefa.")
         card_end()
 
-        card_start()
-        st.subheader("Últimas anotações")
-        if user["crm_notes"]:
-            notes = sorted(user["crm_notes"], key=lambda x: x["data"], reverse=True)
-            for item in notes[:10]:
-                st.markdown(f"**{item['patient']}** — {item['data'].strftime('%d/%m/%Y %H:%M')}")
-                st.write(item["note"])
-                st.markdown("---")
-        else:
-            st.info("Nenhuma anotação ainda.")
-        card_end()
-
-
-elif page == "Análises":
-    hero("Análises", "Transforme dados em leitura rápida e profissional")
-
+if page == "Análises":
+    hero("Análises", "Leitura rápida")
     card_start()
-    st.subheader("Histórico de ações")
     if user["history"]:
-        hist = pd.DataFrame(
-            [
-                {"Data": x["data"].strftime("%d/%m/%Y %H:%M"), "Tipo": x["tipo"], "Descrição": x["descricao"]}
-                for x in sorted(user["history"], key=lambda x: x["data"], reverse=True)
-            ]
-        )
+        hist = pd.DataFrame([{
+            "Data": x["data"].strftime("%d/%m/%Y %H:%M"),
+            "Tipo": x["tipo"],
+            "Descrição": x["descricao"]
+        } for x in sorted(user["history"], key=lambda x: x["data"], reverse=True)])
         st.dataframe(hist, use_container_width=True, hide_index=True)
-        st.download_button(
-            "Exportar histórico em CSV",
-            data=export_csv_bytes(hist),
-            file_name="historico_nutriflow.csv",
-            mime="text/csv",
-        )
+        st.download_button("Exportar histórico", data=hist.to_csv(index=False).encode("utf-8-sig"), file_name="historico.csv", mime="text/csv")
     else:
         st.info("Sem histórico.")
     card_end()
 
     card_start()
-    st.subheader("Calorias por dia")
     if user["diary"]:
         df = pd.DataFrame([{"Data": x["data"].date(), "Calorias": x["kcal"]} for x in user["diary"]])
         resumo = df.groupby("Data", as_index=False).sum()
         fig = px.line(resumo, x="Data", y="Calorias", markers=True)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Adicione registros no diário para ver análises.")
+        st.info("Sem dados no diário.")
     card_end()
 
+if page == "Estudos":
+    hero("Estudos", "Checklist")
     card_start()
-    st.subheader("Banco de alimentos mais calóricos")
-    foods_df = pd.DataFrame(
-        [{"Alimento": k, "Calorias": v["kcal"]} for k, v in foods.items()]
-    ).sort_values("Calorias", ascending=False).head(12)
-    fig = px.bar(foods_df, x="Alimento", y="Calorias")
-    st.plotly_chart(fig, use_container_width=True)
+    for area, topics in STUDY_AREAS.items():
+        st.markdown(f"**{area}**")
+        for topic in topics:
+            key = f"{area}::{topic}"
+            checked = user["study_progress"].get(key, False)
+            user["study_progress"][key] = st.checkbox(topic, value=checked, key=key)
+    if st.button("Salvar progresso"):
+        save_data()
+        add_history("Estudos", "Checklist atualizado")
+        st.success("Salvo.")
     card_end()
 
-
-elif page == "Faculdade e Estudos":
-    hero("Faculdade e Estudos", "Use o app também como base de revisão do curso")
-
-    tab1, tab2 = st.tabs(["Mapa de estudo", "Checklist de domínio"])
-
-    with tab1:
-        card_start()
-        st.subheader("Mapa da graduação")
-        for area, topics in STUDY_AREAS.items():
-            st.markdown(f"### {area}")
-            for t in topics:
-                st.write(f"- {t}")
-        st.info("Esse painel ajuda a organizar estudo de base biológica, alimentos, clínica, saúde coletiva e prática profissional.")
-        card_end()
-
-    with tab2:
-        card_start()
-        st.subheader("Checklist")
-        for area, topics in STUDY_AREAS.items():
-            st.markdown(f"**{area}**")
-            for topic in topics:
-                key = f"{area}::{topic}"
-                checked = user["study_progress"].get(key, False)
-                user["study_progress"][key] = st.checkbox(topic, value=checked, key=key)
-        if st.button("Salvar progresso"):
-            save_data()
-            add_history("Estudos", "Progresso de estudos atualizado")
-            st.success("Progresso salvo.")
-        card_end()
-
-
-elif page == "Configurações":
-    hero("Configurações", "Ajustes do seu espaço e dados do perfil")
-
+if page == "Configurações":
+    hero("Configurações", "Conta e observações")
     card_start()
-    st.subheader("Perfil")
-    st.write(f"**Usuário:** {st.session_state.auth_user}")
-    st.write(f"**Nome:** {user['profile']['full_name']}")
-    st.write(f"**Criado em:** {user['profile']['created_at'][:10]}")
-    card_end()
-
-    card_start()
-    st.subheader("Resumo técnico")
-    st.markdown(
-        "- esta versão usa login local com dados salvos em JSON\n"
-        "- é uma base estilo SaaS, mas ainda sem banco online e sem multiacesso real em nuvem\n"
-        "- já está pronta para evoluir depois para Firebase, Supabase ou banco SQL"
-    )
+    st.write(f'**Usuário:** {st.session_state.auth_user}')
+    st.write(f'**Nome:** {user["profile"]["full_name"]}')
+    st.write(f'**Criado em:** {user["profile"]["created_at"][:10]}')
+    st.caption("Essa versão continua local. Para virar online de verdade, o próximo passo é banco e autenticação em nuvem.")
     card_end()
